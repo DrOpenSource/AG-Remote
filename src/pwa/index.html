@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Antigravity Remote</title>
+  
+  <!-- PWA & Mobile Meta -->
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AG-Remote">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M12 2L2 19h20L12 2zm0 4.5l6.5 11h-13L12 6.5z'/></svg>">
+  <link rel="stylesheet" href="/app.css?v=2">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M12 2L2 19h20L12 2zm0 4.5l6.5 11h-13L12 6.5z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">AG Remote</h1>
+          <button id="btnSwitchSession" class="session-label-btn" title="Click to switch active Antigravity session/workspace">
+            <span class="session-label" id="sessionLabel">Connecting...</span>
+            <span style="font-size: 10px; margin-left: 4px; opacity: 0.7;">▼</span>
+          </button>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="status-badge" id="statusBadge" data-status="disconnected">
+          <span class="status-dot"></span>
+          <span class="status-text" id="statusText">Disconnected</span>
+        </div>
+        <button id="btnRePair" class="btn-icon" title="Pair new session" style="background:none;border:none;color:#94a3b8;cursor:pointer;padding:4px 8px;font-size:16px;">🔑</button>
+      </div>
+    </header>
+
+    <!-- Error / Notification Toast -->
+    <div class="toast-banner hidden" id="toastBanner">
+      <span class="toast-message" id="toastMessage"></span>
+      <button class="toast-close" id="toastClose">&times;</button>
+    </div>
+
+    <!-- Active Approval / Question Card (Prominent & Actionable) -->
+    <section class="approval-card hidden" id="approvalCard">
+      <div class="approval-header">
+        <span class="approval-badge" id="approvalBadge">🔔 Action Permission Required</span>
+        <span class="approval-kind" id="approvalKind">Command</span>
+      </div>
+      <div class="approval-body">
+        <h3 class="approval-desc" id="approvalDesc">Proposed Action</h3>
+        <pre class="approval-detail" id="approvalDetail">Details...</pre>
+        <!-- Interactive Question Options Container -->
+        <div class="approval-options hidden" id="approvalOptions"></div>
+      </div>
+      <div class="approval-actions" id="approvalActions">
+        <button class="btn btn-deny" id="btnDeny">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          Deny
+        </button>
+        <button class="btn btn-approve" id="btnApprove">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
+          Allow Once
+        </button>
+        <button class="btn btn-always" id="btnAlwaysAllow">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+          Always Allow
+        </button>
+      </div>
+    </section>
+
+    <!-- Chat Stream Feed -->
+    <main class="chat-feed" id="chatFeed">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🤖</div>
+        <h2>Connected to Antigravity</h2>
+        <p>Live session messages and approval prompts will appear here in real time.</p>
+      </div>
+    </main>
+
+    <!-- Bottom Input & Control Bar -->
+    <footer class="app-footer">
+      <div class="control-strip">
+        <button class="btn-stop hidden" id="btnStop" title="Stop Generation">
+          <span class="stop-icon">■</span> Stop
+        </button>
+      </div>
+      <form class="prompt-form" id="promptForm">
+        <textarea 
+          id="promptInput" 
+          placeholder="Send prompt to Antigravity..." 
+          rows="1" 
+          maxlength="4000"
+          autocomplete="off"
+          autocorrect="on"
+        ></textarea>
+        <button type="submit" class="btn btn-send" id="btnSend" disabled aria-label="Send prompt">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </div>
+
+  <!-- Pairing / Token Modal -->
+  <div class="modal-backdrop hidden" id="pairingModal">
+    <div class="modal-card">
+      <h2>Connect to AG Remote</h2>
+      <p>Scan the QR code on your PC monitor, or click <strong>AG-Remote</strong> in the VS Code status bar to get your 6-digit PIN:</p>
+      <input type="text" id="tokenInput" placeholder="6-digit PIN (e.g. 849 201)" class="token-input" inputmode="numeric" maxlength="10" autocomplete="one-time-code">
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="btnSaveToken">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Switch Session / Active Windows Modal -->
+  <div class="modal-backdrop hidden" id="sessionsModal">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="margin:0;">Active Antigravity Windows</h2>
+        <button id="btnCloseSessionsModal" style="background:none; border:none; color:#94a3b8; font-size:20px; cursor:pointer;">&times;</button>
+      </div>
+      <p style="font-size:13px; color:#94a3b8; margin-bottom:16px;">Select which Antigravity workspace window to control:</p>
+      <div id="sessionsList" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=2"></script>
+</body>
+</html>

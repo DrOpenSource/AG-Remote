@@ -1,0 +1,18 @@
+{
+  "name": "Antigravity Remote",
+  "short_name": "AG Remote",
+  "description": "Phone Remote Control for Google Antigravity Agent",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0f19",
+  "theme_color": "#0b0f19",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='%236366f1'><rect width='512' height='512' rx='128' fill='%23131b2e'/><path d='M256 80L80 400h352L256 80zm0 90l120 200H136L256 170z' fill='%236366f1'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# secrets & local state
+.env
+.env.*
+.logs/
+
+# build artifacts
+*.vsix
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db

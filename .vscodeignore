@@ -1,0 +1,7 @@
+.git/**
+.logs/**
+test/**
+.vscode/**
+*.vsix
+.env
+.env.*

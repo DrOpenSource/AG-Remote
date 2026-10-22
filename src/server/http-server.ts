@@ -429,7 +429,7 @@ export class RemoteServer {
           }
           try {
             const responseText = typeof body.response === 'string' ? body.response : (body.response ? JSON.stringify(body.response) : undefined);
-            const option = body.option === 'always_allow' || body.option === 'allow_once' ? body.option : undefined;
+            const option = ['allow_once', 'allow_conversation', 'always_allow'].includes(body.option) ? body.option : undefined;
             await this.sessionManager.approve(body.id, responseText, option);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'approved' }));
@@ -463,7 +463,13 @@ export class RemoteServer {
 
         // POST /api/stop
         if (req.method === 'POST' && url.pathname === '/api/stop') {
-          await this.sessionManager.stopGeneration();
+          try {
+            await this.sessionManager.stopGeneration();
+          } catch (err: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'stopped' }));
           return;

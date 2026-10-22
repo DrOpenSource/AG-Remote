@@ -15,6 +15,9 @@
   const approvalDetail = document.getElementById('approvalDetail');
   const approvalOptions = document.getElementById('approvalOptions');
   const approvalActions = document.getElementById('approvalActions');
+  const approvalCwd = document.getElementById('approvalCwd');
+  const approvalIdeOnly = document.getElementById('approvalIdeOnly');
+  const approvalDenyNote = document.getElementById('approvalDenyNote');
   const btnApprove = document.getElementById('btnApprove');
   const btnDeny = document.getElementById('btnDeny');
   const btnStop = document.getElementById('btnStop');
@@ -378,6 +381,22 @@
       approvalOptions.classList.add('hidden');
       approvalOptions.innerHTML = '';
       approvalActions.classList.remove('hidden');
+      if (approvalCwd) {
+        approvalCwd.textContent = approval.cwd ? `in ${approval.cwd}` : '';
+        approvalCwd.classList.toggle('hidden', !approval.cwd);
+      }
+      // Only offer the options the IDE accepts for this request.
+      const actions = Array.isArray(approval.actions) ? approval.actions : ['allow_once', 'deny'];
+      const btnAlways = document.getElementById('btnAlwaysAllow');
+      btnApprove.classList.toggle('hidden', !actions.includes('allow_once'));
+      if (btnAlways) btnAlways.classList.toggle('hidden', !actions.includes('allow_conversation'));
+      btnDeny.classList.toggle('hidden', !actions.includes('deny'));
+      if (approvalDenyNote) {
+        approvalDenyNote.value = '';
+        approvalDenyNote.classList.toggle('hidden', !actions.includes('deny'));
+      }
+      if (approvalIdeOnly) approvalIdeOnly.classList.toggle('hidden', actions.length > 0);
+      setApprovalBusy(false);
     }
 
     approvalCard.classList.remove('hidden');
@@ -466,67 +485,65 @@
     }
   }
 
-  async function approveCurrent(option = 'allow_once') {
-    if (!currentApproval || !token) return;
-    const approvalId = currentApproval.id;
-    hideApproval();
-
-    try {
-      const res = await fetch('/api/approve', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ id: approvalId, option })
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to approve action');
-      }
-    } catch (err) {
-      showToast('Network error executing approval.');
-    }
+  function setApprovalBusy(busy) {
+    for (const b of approvalActions.querySelectorAll('button')) b.disabled = busy;
+    approvalCard.classList.toggle('busy', busy);
   }
 
-  async function denyCurrent() {
+  // Keeps the card visible until the IDE confirms; shows the real error otherwise.
+  async function sendApprovalDecision(endpoint, payload, failMsg) {
     if (!currentApproval || !token) return;
     const approvalId = currentApproval.id;
-    hideApproval();
-
+    setApprovalBusy(true);
     try {
-      const res = await fetch('/api/deny', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: approvalId })
+        body: JSON.stringify({ id: approvalId, ...payload })
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to deny action');
+      if (res.ok) {
+        if (currentApproval && currentApproval.id === approvalId) hideApproval();
+        if (navigator.vibrate) navigator.vibrate(20);
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || failMsg);
     } catch (err) {
-      showToast('Network error executing denial.');
+      showToast('Network error: nothing was sent to the IDE.');
     }
+    setApprovalBusy(false);
+  }
+
+  function approveCurrent(option = 'allow_once') {
+    return sendApprovalDecision('/api/approve', { option }, 'Failed to approve action');
+  }
+
+  function denyCurrent() {
+    const reason = approvalDenyNote ? approvalDenyNote.value.trim() : '';
+    return sendApprovalDecision('/api/deny', reason ? { reason } : {}, 'Failed to deny action');
   }
 
   async function stopCurrent() {
     if (!token) return;
     try {
-      await fetch('/api/stop', {
+      const res = await fetch('/api/stop', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         }
       });
-      updateStatus('idle');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to stop the agent.');
+        return;
+      }
+      showToast('Stop sent to the IDE.');
     } catch (err) {
-      showToast('Failed to stop generation.');
+      showToast('Network error: stop was not sent.');
     }
   }
 
@@ -534,7 +551,7 @@
   btnApprove.addEventListener('click', () => approveCurrent('allow_once'));
   const btnAlwaysAllow = document.getElementById('btnAlwaysAllow');
   if (btnAlwaysAllow) {
-    btnAlwaysAllow.addEventListener('click', () => approveCurrent('always_allow'));
+    btnAlwaysAllow.addEventListener('click', () => approveCurrent('allow_conversation'));
   }
   btnDeny.addEventListener('click', denyCurrent);
   btnStop.addEventListener('click', stopCurrent);

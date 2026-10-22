@@ -3,7 +3,7 @@ import { windowRegistry, WindowRegistry } from '../src/core/window-registry.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { SessionManager } from '../src/core/session-manager.ts';
 import { RemoteServer } from '../src/server/index.ts';
-import { CdpBridge } from '../src/adapter-antigravity/cdp-bridge.ts';
+import { buildInteraction } from '../src/adapter-antigravity/ls-bridge.ts';
 
 console.log('='.repeat(75));
 console.log('🧪 TEST SUITE: MULTI-WINDOW COORDINATOR HUB & CDP ACTION ENGINE');
@@ -90,14 +90,12 @@ async function runTests() {
   const selRes = await postJson('http://127.0.0.1:49235/api/windows/select', { windowId: 'win-ext-test' }, token);
   assert(selRes.status === 'selected', 'POST /api/windows/select switches active window');
 
-  // --- Suite 3: CDP Bridge & Approval Options ---
-  console.log('\n[Suite 3] CDP Bridge & Approval Options');
-  const cdp = new CdpBridge();
-  assert(typeof cdp.approveAllowOnce === 'function', 'CdpBridge implements approveAllowOnce');
-  assert(typeof cdp.approveAlwaysAllow === 'function', 'CdpBridge implements approveAlwaysAllow');
-  assert(typeof cdp.denyAction === 'function', 'CdpBridge implements denyAction');
-  assert(typeof cdp.injectPrompt === 'function', 'CdpBridge implements injectPrompt');
-  assert(typeof cdp.answerQuestion === 'function', 'CdpBridge implements answerQuestion');
+  // --- Suite 3: Live bridge approval options ---
+  console.log('\n[Suite 3] Live Bridge Approval Options (verified wire shapes, NOTES.md §13)');
+  const p = { cascadeId: 'c', trajectoryId: 't', stepIndex: 4, kind: 'permission', stepType: 'RUN_COMMAND', commandLine: 'echo hi' };
+  assert(JSON.stringify(buildInteraction(p, { allow: true, scope: 'once' })) === '{"trajectoryId":"t","stepIndex":4,"permission":{"allow":true,"scope":1}}', 'allow_once maps to permission scope ONCE (1)');
+  assert((buildInteraction(p, { allow: true, scope: 'conversation' }) as any).permission.scope === 2, 'allow_conversation maps to scope CONVERSATION (2)');
+  assert((buildInteraction(p, { allow: false, instruction: 'use ls' }) as any).permission.userDenyInstruction === 'use ls', 'deny carries the instruction');
 
   // Test 5: POST /api/approve accepts option parameter without crashing
   const approveRes = await postJson('http://127.0.0.1:49235/api/approve', {

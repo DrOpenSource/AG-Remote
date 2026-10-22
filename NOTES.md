@@ -7,7 +7,8 @@
 | 2026-10-12 | Phase 0/1 | Strict Adapter Isolation (`adapter-antigravity`) | Isolate all Antigravity DOM/CDP/API dependencies so the rest of the codebase (`core`, `server`, `pwa`) remains IDE-agnostic and resilient to IDE changes. | Accepted |
 | 2026-10-12 | Phase 0/1 | Local-first & Zero External Network | Security requirement: zero external network, no cloud relay. (Amended 2026-10-21: binding is `0.0.0.0` with token auth; see decision D-2 below.) | Accepted |
 | 2026-10-12 | Phase 0/1 | Single-use 5-minute QR pairing tokens | Mitigates token interception and unauthorized remote access. | Accepted |
-| 2026-10-21 | D-1 | Drop CDP-selector approach; use native `antigravity.*` extension commands as primary action path | Audit found 6 of 7 CDP selectors do not exist in the IDE; CDP also needs a launch flag. IDE ships real commands (`antigravity.command.accept/reject`, `antigravity.terminalCommand.*`). Pending runtime spike. | Proposed |
+| 2026-10-22 | D-1 | Approvals go through the local language-server Connect RPC (`HandleCascadeUserInteraction`), not CDP and not `antigravity.*` commands | Spike verified end to end (see §13). CDP selectors were invented; native commands do not carry a permission response. | **Accepted (verified)** |
+| 2026-10-22 | D-4 | Personal-tool scope; unofficial internal API and runtime read of the language-server token are accepted | Owner decision. No supported API exists. Token never persisted/logged/transmitted; localhost only; fail closed; pin tested IDE version. | Accepted |
 | 2026-10-21 | D-2 | Keep `0.0.0.0` default binding, document plain-HTTP LAN risk, add first-run consent + `127.0.0.1` option | Phone-on-Wi-Fi is the core use case (field-verified); token+PIN auth in place. Hardening: consent prompt, Tailscale HTTPS as the recommended path. | Accepted |
 | 2026-10-21 | D-3 | No text-prompt fallbacks for approve/deny/stop | Sending "Approved: ..." as a chat prompt does not unblock the IDE and misreports success. Fail loudly instead. | Accepted |
 
@@ -146,3 +147,50 @@ From PRD Section 17:
    - Total test suite: 97 passed, 0 failed across all 5 suites (`test:adapter`, `test:server`, `test:pwa`, `test:pairing`, `test:audit`).
    - Package `ag-remote-0.1.0.vsix` compiled and verified.
 
+
+## 12. Phase 5.0 Spike Findings (2026-10-21/22)
+
+**Method:** temporary spike commands (uncommitted `src/extension/spike.ts`) in the extension host; live test in `../ag-remote-sandbox` with a real pending `run_command` approval (pending ~108 s before probe).
+
+1. **Command IDs guessed from IDE source were wrong.** `antigravity.command.accept/reject` and `antigravity.terminalCommand.*` are NOT registered at runtime (`getCommands(true)` returned 3161 commands, 242 relevant; dump in `.logs/commands.json`, gitignored).
+2. **`antigravity.acceptAgentStep` is the wrong tool.** It is the agent UI's "Accept Step" keybinding (Alt+Enter, analytics id `step_accept`). Executing it against a pending `run_command` did NOT approve it: the agent failed with `permission check failed for command "echo hello > probe.txt": unexpected user interaction type: not permission` (transcript `bf070acf…`, step 6). It reaches the pending step but sends the wrong interaction type. **Do not use accept/rejectAgentStep for tool permissions.**
+3. **The real approval path is an RPC, not a command.** The agent panel is a separate renderer (`out/jetskiAgent/main.js`). Its Allow/Deny buttons call `handleCascadeUserInteraction(cascadeId, {trajectoryId, stepIndex, interaction})` with:
+   - terminal: `{case:"runCommand", value:{confirm, proposedCommandLine, submittedCommandLine}}`
+   - file access: `{case:"filePermission", value:{allow, scope, absolutePathUri}}`
+   - browser: `{case:"openBrowserUrl", value:{confirm}}`
+   Prompts use `sendUserCascadeMessage`. Real UI strings: "Allow Once", "Always Allow", "Deny".
+4. **Usable extension commands found (registered):** `antigravity.sendPromptToAgentPanel`, `antigravity.openAgent`, `antigravity.agentSidePanel.focus/open`, `antigravity.startNewConversation`, `antigravity.openConversationPicker`. Arguments for `sendPromptToAgentPanel` untested.
+5. **Open question (blocked):** how to reach the language-server RPC (port/auth) from outside the agent renderer. Inspecting live process args / the built-in extension's auth code was blocked by the sandbox classifier as credential exploration, so it was not pursued without explicit user direction.
+
+**Decision update:** D-1 revised. Command-dispatch plan is dead for approvals. Candidate paths: (A) LS RPC `handleCascadeUserInteraction` (clean, needs connection/auth discovery); (B) keystroke/UI automation of the real Allow button (needs verified DOM, CDP flag); (C) `sendPromptToAgentPanel` for prompts only.
+
+### 12.1 Language-server discovery (2026-10-22, user-run redacted script)
+- One `language_server_windows_x64.exe` **per IDE window** (flag `--workspace_id`), plus one without a workspace. Each listens on 2-3 loopback ports (`127.0.0.1` only) and takes `--csrf_token` and `--extension_server_csrf_token` as **command-line arguments**.
+- The built-in extension keeps the token in memory (`antigravityLanguageServer.setCsrfToken(...)`, `setPort(httpsPort)`); the agent UI sends it as HTTP header `x-codeium-csrf-token`.
+- Not yet known: which of the listening ports serves the Connect/gRPC API, and the exact service path for `HandleCascadeUserInteraction` (not found by static grep).
+- **Design risk:** the only discovered way for AG-Remote to obtain the token is reading another process's command line at runtime. It is an unofficial internal API, may break on IDE updates, and touches a credential. Needs an explicit owner decision (and relates to open ToS question #1).
+
+## 13. Phase 5.0 RESULT: approval via language-server RPC WORKS (2026-10-22)
+
+**Verified end to end** on a default-launched IDE (no debug flag), in `../ag-remote-sandbox`:
+1. A pending `run_command` step was observed as `WAITING` (poll at ~3-4 Hz, first seen 55 ms after watch start).
+2. `HandleCascadeUserInteraction` was sent; server replied `200 {}`.
+3. Step went `WAITING -> RUNNING` (~320 ms) `-> DONE`; `probe.txt` was created; agent resumed (`CHECKPOINT`, then a `PLANNER_RESPONSE` reporting success).
+
+**Facts that define the design**
+- **The live agent state is held by the workspace-less language server** (the process with no `--workspace_id`). The per-workspace servers return the same steps but show the pending step as stale `CANCELED`; that was the cause of every earlier "found 0 pending". **Always query the workspace-less server for live state and send interactions to it.** (Per-window servers are for LSP/workspace work.)
+- Auth: header `x-codeium-csrf-token` with the target server's own `--csrf_token`. Each server exposes an HTTPS port and an HTTP port on `127.0.0.1` (self-signed cert; third port is something else and resets). Protocol is Connect over JSON: `POST /exa.language_server_pb.LanguageServerService/<Method>` with headers `content-type: application/json`, `connect-protocol-version: 1`.
+- Methods confirmed: `GetCascadeTrajectory {cascadeId}` -> `{trajectory:{trajectoryId, steps[]}}`; `HandleCascadeUserInteraction`.
+- **Approve once** for a terminal command (step has `requestedInteraction.permission`):
+  `{cascadeId, interaction:{trajectoryId, stepIndex, permission:{allow:true, scope:1}}}` (scope enum: 1=ONCE, 2=CONVERSATION, 3=WORKSPACE, 4=GLOBAL, 5=PROJECT). Deny: `allow:false` (optional `userDenyInstruction`). Other `requestedInteraction` kinds seen in UI code: `runCommand{confirm,...}`, `filePermission{allow,scope,absolutePathUri}`, `openBrowserUrl`, `mcp`, `readUrlContent`, etc. Dispatch on the key present in `requestedInteraction`.
+- Step statuses seen: `PENDING, WAITING, RUNNING, DONE, CANCELED`. Pending = `status==WAITING && requestedInteraction`.
+- cascadeId = conversation folder name under `~/.gemini/antigravity-ide/brain/`; sort by `transcript.jsonl` mtime (NOT folder mtime) to find the newest.
+- Window to workspace mapping (for per-window server): `workspace_id` = SHA-256 hex of `uri.toString()` (e.g. `file:///c%3A/...`), or a readable `file_c_3A_..._Name` form for short paths.
+- Credential handling: token read from process command line at runtime via `Get-CimInstance Win32_Process`, kept in memory only, never logged or sent to the phone. This is the accepted personal-tool risk (decision D-4).
+
+**Open items for the real bridge**
+- Prompt sending: use `SendUserCascadeMessage` (not yet tested) or command `antigravity.sendPromptToAgentPanel`.
+- Stop/cancel: find the matching RPC (`CancelCascadeInvocation`-style; not yet located).
+- Replace polling with `StreamAgentStateUpdates` if feasible; 250-400 ms polling is acceptable fallback.
+- Avoid reading CommandLine via PowerShell on every call (slow, ~100s of ms): cache token+ports, re-discover on connection failure.
+- Spike code (`src/extension/spike.ts`, 4 temporary commands) is UNCOMMITTED reference material; delete after the NativeBridge lands.

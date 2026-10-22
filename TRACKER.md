@@ -15,7 +15,7 @@
 | **Phase 2** | **Full-Fidelity Action Engine** | 3-button actions (`Allow Once`, `Always Allow`, `Deny`), `ask_question` cards | 18 / 18 | 🟢 **Complete** |
 | **Phase 3** | **Mobile PWA Client Experience** | Edge-to-edge UI, dark mode, window switcher modal, token exchange | 22 / 22 | 🟢 **Complete** |
 | **Phase 4** | **System & Environment Sentinel** | Reality verification (`0.0.0.0`, path invariance, safe-area, camera pre-fetch) | 26 / 26 | 🟢 **Complete** |
-| **Phase 5** | **Native Command Dispatcher** | Extension-host `antigravity.*` commands replace CDP selectors; per-window command routing | Not started (spike first) | 🟡 **Next** |
+| **Phase 5** | **Language-Server Bridge** | Connect RPC to the live agent server replaces CDP; spike PASSED 2026-10-22 | Spike verified | 🟡 **Next: build NativeBridge** |
 | **Phase 5b** | **Real-World Verification** | Live smoke tests, real phone verification of Oct-14 fixes | Pending | ⚪ **Planned** |
 | **Phase 6** | **Ship-Ready Release** | Single-click VSIX, zero telemetry, automated recovery & stress validation | Pending | ⚪ **Planned** |
 
@@ -86,8 +86,8 @@
 * **Objective:** Approve/deny/stop/prompt in the real IDE with no launch flag and no guessed DOM selectors.
 * **Why the old plan was dropped:** see NOTES.md D-1/D-3 and session_handover_notes.md §B.
 * **Tasks (stop and report after each):**
-  - [ ] **5.0 Spike:** dump `vscode.commands.getCommands(true)` `antigravity.*`; prove which commands unblock a real pending approval (accept/reject/terminalCommand.*).
-  - [ ] **5.1 NativeBridge:** executeCommand-based approve/deny/stop; remove prompt-text fallbacks (D-3); explicit errors to PWA.
+  - [x] **5.0 Spike (PASSED):** real approval sent via `HandleCascadeUserInteraction`, agent resumed. See NOTES.md §13.
+  - [ ] **5.1 LsBridge:** discover live (workspace-less) server, cache token/ports, `permission` approve/deny + other interaction kinds, stop, prompt; remove prompt-text fallbacks (D-3); explicit errors to PWA.
   - [ ] **5.2 Multi-window routing:** hub routes commands by `windowId`; worker windows execute in their own extension host.
   - [ ] **5.3 Prompt injection:** verified delivery into the *existing* conversation.
   - [ ] **5.4 Bridge indicator in PWA** (native / unavailable) and CDP kept optional with verified selectors only.

@@ -22,7 +22,9 @@
 3. **Dangerous silent fallbacks** in `cli-bridge.ts`: a failed approve sends a *prompt* ("Approved: Proceed…"), a failed deny sends "Denied: …", stop sends `/stop`. These don't click anything, and `chat -r` opens a **new** session. The phone UI can show "approved" while the IDE is still blocked. Remove them; fail loudly instead.
 4. **Multi-window gap:** only the primary window hosts the server. Secondary windows only register and heartbeat; **no command channel back to them**, so approve/prompt always acts in whichever window owns the server, not the one selected on the phone.
 
-## C. NEW approach (found in the IDE's own code; needs runtime proof first)
+## C0. UPDATE 2026-10-22: SPIKE PASSED. Approvals work via language-server RPC; read NOTES.md §13 first. Section C below is superseded (the native-command guess was wrong).
+
+## C. NEW approach (superseded) (found in the IDE's own code; needs runtime proof first)
 Real, native commands exist in the IDE and can be invoked from the extension host with `vscode.commands.executeCommand`, with no CDP and no flag:
 - `antigravity.command.accept` / `antigravity.command.reject`
 - `antigravity.terminalCommand.accept` / `.reject` / `.run`
@@ -33,7 +35,7 @@ UI strings seen in agent bundle: "Allow Once", "Accept Step", "Cancel step", "De
 **Unproven:** whether these fire when the agent panel (not an editor) has focus, and whether `executeCommand` works for them from a third-party extension. Spike this FIRST (Step 1 below).
 
 ## D. Ordered plan for the next session (stop and report after each step)
-1. **Spike (read-only first):** from a throwaway command in the extension, call `vscode.commands.getCommands(true)` and dump all `antigravity.*` IDs to `.logs/commands.json`. Then, with a real pending approval in a sandbox workspace, run `executeCommand('antigravity.command.accept')` etc. and record which ones actually unblock the agent. Also test `antigravity.prioritized.command.open` for prompt focus.
+1. **Spike: DONE and PASSED (2026-10-22).** Next is Step 3, building `LsBridge` per NOTES.md §13.
 2. **Baseline commit: DONE 2026-10-21** (user approved; `.gitignore` added).
 3. **Replace the bridge:** new `NativeBridge` (extension-host `executeCommand`) as primary; keep CDP optional/secondary with *verified* selectors only. Delete the prompt-text fallbacks (B3); return explicit errors to the PWA.
 4. **Fix multi-window routing (B4):** workers must receive commands from the hub (WebSocket or long-poll to hub) and execute them in their own host; hub routes by `windowId`.

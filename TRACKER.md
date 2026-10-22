@@ -135,3 +135,30 @@ npm test
 * `test:audit` (26/26) — Production regression suite, transcript state machines
 * `test:env` (26/26) — Environment & system assumptions sentinel
 * **Total: 141 passed, 0 failed (100% green)**
+
+---
+
+## 5. Session Plan 2026-10-22: Language-Server Bridge (personal-tool v1)
+
+Legend: ✅ do today (verified path) · 🟡 do today after a short live probe · ⬜ later
+
+| # | Feature | Source of truth / how | Status today |
+| :-- | :-- | :-- | :-- |
+| 1 | Discover live agent server, cache token + ports, re-discover on failure | workspace-less `language_server_windows_x64`; token in memory only | ✅ |
+| 2 | Accurate pending-approval detection (replaces transcript guessing) | `GetCascadeTrajectory`, step `WAITING` + `requestedInteraction` | ✅ |
+| 3 | Approve: "Yes, allow this time" | `permission{allow:true,scope:1}` (verified) | ✅ |
+| 4 | Approve: "Always allow in this conversation" | `permission{allow:true,scope:2}` | ✅ (same shape, scope enum known) |
+| 5 | Deny with instruction ("No, tell the agent…") | `permission{allow:false,userDenyInstruction}` | ✅ |
+| 6 | Approval card shows exact command, folder, options (mirrors IDE) | step `runCommand` + `permission.resource` | ✅ |
+| 7 | Other request kinds: file access, browser URL, MCP, read URL | `filePermission`, `openBrowserUrl`, `mcp`, `readUrlContent` (shapes in UI code) | 🟡 (verify each with a live prompt) |
+| 8 | Multiple pending approvals across conversations/windows | one live server sees all conversations; select by `cascadeId` | ✅ |
+| 9 | Remove fake fallbacks; explicit errors to phone | delete "Approved:/Denied:/`/stop`" prompts and CDP selectors | ✅ |
+| 10 | Live conversation view | existing transcript watcher (works) | ✅ keep |
+| 11 | Send prompt into the existing conversation | `SendUserCascadeMessage` (shape in bundle, untested) | 🟡 |
+| 12 | Stop generation | cancel RPC (name not yet located) | 🟡 |
+| 13 | "Always allow this command" (persist grant, wider scope) | `permission{scope:3/4,persistGrants}` | 🟡 |
+| 14 | Contract + real tests, isolated log dir, replace mock-trap suites | assert message shapes; opt-in live smoke test | ✅ |
+| 15 | Real-phone verification of PIN UX, header/feed sync | needs the user's phone | 🟡 (needs you, ~10 min) |
+| 16 | LAN-exposure first-run consent, portable paths, build step | Phase 6.0 hardening | ⬜ |
+| 17 | Push notification when agent is waiting | needs a service worker push channel | ⬜ |
+| 18 | Streaming instead of polling (`StreamAgentStateUpdates`) | optional optimization | ⬜ |

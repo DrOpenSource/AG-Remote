@@ -12,19 +12,19 @@
 
 ## 1. Where we are
 - **Working:** approve/deny (+note), prompt, stop, follow new IDE chats, QR/PIN phone pairing over Wi-Fi, Material 3 phone UI, **one tab per IDE window**, host hand-over when a window closes. All live-tested on the phone by the owner (multi-window retest passed 2026-10-27).
-- **Repo:** branch `feat/multi-window` merged into local `main` (2026-10-27). `npm test` = 9 suites green. **Nothing is on GitHub:** `origin` (github.com/DrOpenSource/AG-Remote) has no branches; `main`'s upstream shows "gone". Pushing is the owner's call.
+- **Repo:** branch `feat/multi-window` merged into local `main` (2026-10-27). `npm test` = 9 suites green. Pushed to `origin/main` (github.com/DrOpenSource/AG-Remote) on 2026-10-27.
 - **Decisions:** D-1 LS RPC for actions; D-2 `0.0.0.0` + token/PIN; D-3 no fake text fallbacks; D-4 personal tool only; **D-5 no "New chat" from the phone** (runs hidden from the Agent panel). See NOTES.md §1.
 
 ## 2. Facts that cost time (do not relearn)
 1. Live agent state is on the language server with **no `--workspace_id`**; per-workspace servers show stale `CANCELED`. Protocol in NOTES.md §13.
 2. A window's chat comes only from the IDE's conversation list (`GetAllCascadeTrajectories`), never from transcript guessing (NOTES.md §14).
-3. RPC names and request fields can be read from `%LOCALAPPDATA%/Programs/Antigravity/resources/bin/language_server.exe` with `grep -aoE` (e.g. `*StartCascadeRequest).Get[A-Za-z]+`). The JS bundles don't contain them.
+3. RPC names and request fields can be read from `%LOCALAPPDATA%/Programs/Antigravity/resources/bin/language_server.exe` with `grep -aoE` (e.g. `grep -aoE "\*StartCascadeRequest\)\.Get[A-Za-z]+" language_server.exe | sort -u`). The JS bundles don't contain them.
 4. Claude Code sessions are not reachable by AG-Remote; use Claude Code's Remote Control.
 
-## 3. Possible next work (owner picks; none is promised)
-- Push to GitHub (owner decision).
-- HTTPS (Tailscale, docs/TAILSCALE_SETUP.md) so the phone page can install as a real PWA.
-- Later, separately: the paid release (VS Code extension + Gumroad). Don't mix it with personal-tool work.
+## 3. Next work: v0.2 hosted relay (agreed 2026-10-27, not started)
+- **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `relay.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
+- Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes; confirm the subdomain name first.
+- This is the paid-release track; keep it separate from personal-tool fixes.
 
 ## 4. Working agreements and gotchas
 - The auto-mode classifier blocks me from reading process command lines/credentials. Such code runs in the extension, triggered by the owner.
@@ -35,7 +35,7 @@
 - Commit only with the owner's OK; end with the Co-Authored-By line. Never commit `.env`, `.logs/`, `*.vsix`.
 
 ## 5. Kickoff prompt for a new session
-> Read `session_handover_notes.md` "START HERE" and NOTES.md §14. Tell me the repo state in two lines, then ask what we're doing today.
+> Read `session_handover_notes.md` "START HERE", then `docs/relay_plan.md`. Tell me the repo state in two lines, then propose Phase 1 of the relay plan. Ask me before any deploy, DNS change, or new dependency.
 
 ---
 

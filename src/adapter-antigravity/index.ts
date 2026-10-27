@@ -3,6 +3,9 @@ import { type AdapterConfig, defaultConfig } from './config.ts';
 import { SessionWatcher } from './session-watcher.ts';
 import { LsBridge, type LiveInteraction } from './ls-bridge.ts';
 import { auditLogger } from '../core/logger.ts';
+import { dataDir } from '../core/data-dir.ts';
+import fs from 'fs';
+import path from 'path';
 
 export interface AdapterDeps {
   /** Live IDE bridge. `null` disables it (tests, offline). Default: real bridge unless AG_REMOTE_LIVE_BRIDGE=0. */
@@ -10,7 +13,29 @@ export interface AdapterDeps {
   livePollMs?: number;
 }
 
-const BRIDGE_UNAVAILABLE = 'Antigravity live bridge unavailable: is the IDE running? Nothing was sent.';
+/**
+ * Records the field names of the live GetAllCascadeTrajectories response (no titles, no tokens), so the
+ * unverified response shape can be checked against the parser. Written to ~/.ag-remote/ls-conversations-shape.json.
+ */
+function recordConversationShape(res: any): void {
+  try {
+    const map = res?.trajectorySummaries || res?.summaries || {};
+    const first: any = Object.values(map)[0] || {};
+    const shape = {
+      at: new Date().toISOString(),
+      topLevelKeys: Object.keys(res || {}),
+      conversationCount: Object.keys(map).length,
+      summaryKeys: Object.keys(first),
+      metadataKeys: Object.keys(first.trajectoryMetadata || {}),
+      sampleWorkspaceUris: (first.trajectoryMetadata?.workspaceUris || (first.workspaces || []).map((w: any) => w?.workspaceFolderAbsoluteUri)).slice(0, 3),
+      sampleTimes: { lastUserInputTime: first.lastUserInputTime, lastModifiedTime: first.lastModifiedTime }
+    };
+    fs.mkdirSync(dataDir(), { recursive: true });
+    fs.writeFileSync(path.join(dataDir(), 'ls-conversations-shape.json'), JSON.stringify(shape, null, 2));
+  } catch (_) {}
+}
+
+const BRIDGE_UNAVAILABLE ='Antigravity live bridge unavailable: is the IDE running? Nothing was sent.';
 
 function toApproval(p: LiveInteraction): Approval {
   const actions: ApprovalOption[] =
@@ -47,6 +72,7 @@ export class AntigravityAdapter implements IdeAdapter {
       ? deps.lsBridge
       : (process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge());
     this.livePollMs = deps.livePollMs ?? 1000;
+    if (this.ls && deps.lsBridge === undefined) this.ls.onConversationsRaw = recordConversationShape;
 
     this.watcher.on('event', (e: AdapterEvent) => {
       if (this.ls && (e.type === 'approval_requested' || e.type === 'status_changed')) {
@@ -176,8 +202,18 @@ export class AntigravityAdapter implements IdeAdapter {
     this.eventCallbacks.push(cb);
   }
 
-  public listSessions(): Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> {
-    return this.watcher.listAllSessions();
+  public async listSessions(): Promise<Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>> {
+    // The IDE's own conversation list knows each conversation's folder; transcripts only let us guess.
+    const live = this.ls ? await this.ls.listConversations().catch(() => null) : null;
+    if (!live) return this.watcher.listAllSessions();
+    const current = this.watcher.getActiveConversationId();
+    return live.map(c => ({
+      id: c.cascadeId,
+      mtime: c.lastActivity,
+      title: c.title,
+      workspace: c.workspaces[0] || '',
+      isCurrent: c.cascadeId === current
+    }));
   }
 
   public setWorkspace(workspacePath: string): void {

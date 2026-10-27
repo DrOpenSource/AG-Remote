@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 
@@ -176,6 +176,18 @@ async function run() {
 
   const audit = fs.existsSync(auditLogger.getLogPath()) ? fs.readFileSync(auditLogger.getLogPath(), 'utf8') : '';
   assert(!audit.includes(TOKEN), 'csrf token never written to the audit log');
+
+  console.log('\n[Suite 4a] Conversation list (shape read from the agent panel code)');
+  const convs = parseConversations({ trajectorySummaries: {
+    old: { summary: 'Old chat', workspaces: [{ workspaceFolderAbsoluteUri: 'file:///c%3A/Users/u/Proj-A' }], lastModifiedTime: '2026-10-20T10:00:00Z' },
+    fresh: { summary: '', trajectoryMetadata: { workspaceUris: ['file:///c%3A/Users/u/Proj-B'] }, lastUserInputTime: { seconds: '1800000000' } }
+  } });
+  assert(convs[0].cascadeId === 'fresh' && convs[1].cascadeId === 'old', 'conversations sorted newest first');
+  assert(convs[1].workspaces[0] === 'c:/users/u/proj-a', 'workspace URI from workspaces[] normalised to a path');
+  assert(convs[0].workspaces[0] === 'c:/users/u/proj-b', 'trajectoryMetadata.workspaceUris preferred when present');
+  assert(convs[0].title === 'Conversation fresh', 'untitled conversation gets a fallback title');
+  assert(parseConversations({}).length === 0 && parseConversations(null).length === 0, 'empty or missing response yields no conversations');
+  assert(normalizeWorkspace('C:\\Users\\u\\Proj-A\\') === 'c:/users/u/proj-a', 'Windows path and file URI normalise to the same key');
 
   console.log('\n[Suite 4] Following a new conversation');
   const writeTranscript = (id: string, lines: object[], mtime: Date) => {

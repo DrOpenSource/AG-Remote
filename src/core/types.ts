@@ -54,7 +54,7 @@ export interface IdeAdapter {
   deny(id: string, reason?: string): Promise<void>;
   stop(): Promise<void>;
   onEvent(cb: (e: AdapterEvent) => void): void;
-  listSessions?(): Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>;
+  listSessions?(): Promise<Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>> | Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>;
   setActiveSession?(id: string): Promise<boolean>;
   setWorkspace?(workspacePath: string): void;
 }

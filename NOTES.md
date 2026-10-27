@@ -186,6 +186,7 @@ From PRD Section 17:
 - Step statuses seen: `PENDING, WAITING, RUNNING, DONE, CANCELED`. Pending = `status==WAITING && requestedInteraction`.
 - cascadeId = conversation folder name under `~/.gemini/antigravity-ide/brain/`; sort by `transcript.jsonl` mtime (NOT folder mtime) to find the newest.
 - Window to workspace mapping (for per-window server): `workspace_id` = SHA-256 hex of `uri.toString()` (e.g. `file:///c%3A/...`), or a readable `file_c_3A_..._Name` form for short paths.
+- **Conversation to workspace mapping (VERIFIED live 2026-10-27):** `GetAllCascadeTrajectories {}` on the workspace-less server returns `{trajectorySummaries: {<cascadeId>: summary}}`. Summary keys: `summary` (title), `stepCount`, `status`, `trajectoryId`, `createdTime`, `lastModifiedTime`, `lastUserInputTime` (RFC3339), `lastUserInputStepIndex`, `trajectoryType`, `workspaces[].workspaceFolderAbsoluteUri`, `trajectoryMetadata.{workspaceUris, workspaces, createdAt, rootConversationId, initializationStateId}`. URIs look like `file:///c%3A/Users/.../ag-remote-sandbox`. This is the agent panel's own source for its conversation list; use it instead of guessing from transcripts. Parsed by `parseConversations` in `ls-bridge.ts`.
 - Credential handling: token read from process command line at runtime via `Get-CimInstance Win32_Process`, kept in memory only, never logged or sent to the phone. This is the accepted personal-tool risk (decision D-4).
 
 **Open items for the real bridge**

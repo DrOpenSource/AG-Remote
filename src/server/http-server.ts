@@ -379,7 +379,7 @@ export class RemoteServer {
 
         // GET /api/sessions (Discover active Antigravity conversations)
         if (req.method === 'GET' && url.pathname === '/api/sessions') {
-          const sessions = this.sessionManager.listSessions();
+          const sessions = await this.sessionManager.listSessions();
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
           res.end(JSON.stringify({ sessions }));
           return;

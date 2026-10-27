@@ -86,9 +86,9 @@ export class SessionManager extends EventEmitter {
     return win;
   }
 
-  public listSessions(): Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> {
+  public async listSessions(): Promise<Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>> {
     const activeWindows = this.registry.getAll();
-    const allSessions = this.adapter.listSessions ? this.adapter.listSessions() : [];
+    const allSessions = this.adapter.listSessions ? await this.adapter.listSessions() : [];
 
     // If active windows are registered, filter sessions to only those matching active windows!
     if (activeWindows.length > 0) {

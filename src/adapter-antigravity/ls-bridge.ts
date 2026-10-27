@@ -76,6 +76,54 @@ export function buildInteraction(p: LiveInteraction, d: Decision): Record<string
   throw new LsBridgeError(`Unsupported interaction kind "${p.kind}"; answer it in the IDE`);
 }
 
+export interface Conversation {
+  cascadeId: string;
+  title: string;
+  /** Lower-case, forward-slash folder paths the conversation belongs to (from the IDE's own record). */
+  workspaces: string[];
+  /** ms since epoch of the last user input (falls back to last modification). */
+  lastActivity: number;
+}
+
+/** "file:///c%3A/Users/x/Proj" -> "c:/users/x/proj". Pure; exported for tests. */
+export function normalizeWorkspace(uriOrPath: string): string {
+  let p = String(uriOrPath || '');
+  if (p.startsWith('file://')) {
+    p = p.slice('file://'.length);
+    try { p = decodeURIComponent(p); } catch (_) {}
+    if (/^\/[a-zA-Z]:/.test(p)) p = p.slice(1);
+  }
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function toMs(ts: any): number {
+  if (!ts) return 0;
+  if (typeof ts === 'string') return Date.parse(ts) || 0;
+  if (typeof ts === 'object' && ts.seconds !== undefined) return Number(ts.seconds) * 1000 + Math.floor(Number(ts.nanos || 0) / 1e6);
+  return 0;
+}
+
+/**
+ * Parses GetAllCascadeTrajectories. The agent panel reads summaries keyed by cascade id, each with
+ * `summary`, `workspaces[].workspaceFolderAbsoluteUri` or `trajectoryMetadata.workspaceUris`, and
+ * `lastUserInputTime` / `lastModifiedTime`. Pure; exported for tests.
+ */
+export function parseConversations(res: any): Conversation[] {
+  const map = res?.trajectorySummaries || res?.summaries || {};
+  return Object.entries(map).map(([cascadeId, s]: [string, any]) => {
+    const metaUris: string[] = s?.trajectoryMetadata?.workspaceUris || [];
+    const uris = metaUris.length > 0
+      ? metaUris
+      : (s?.workspaces || []).map((w: any) => w?.workspaceFolderAbsoluteUri).filter(Boolean);
+    return {
+      cascadeId,
+      title: String(s?.summary || '').trim() || `Conversation ${cascadeId.slice(0, 8)}`,
+      workspaces: uris.map(normalizeWorkspace),
+      lastActivity: toMs(s?.lastUserInputTime) || toMs(s?.lastModifiedTime)
+    };
+  }).sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
 /** Extracts the newest step that is waiting on the user. Pure; exported for tests. */
 export function extractPending(cascadeId: string, trajectory: any): LiveInteraction | null {
   const steps: any[] = trajectory?.steps || [];
@@ -196,6 +244,17 @@ export class LsBridge {
     }
     throw new LsBridgeError('The IDE did not register the prompt');
   }
+
+  /** Every conversation the IDE knows about, newest first; null if the server is unreachable. */
+  public async listConversations(): Promise<Conversation[] | null> {
+    const res = await this.call('GetAllCascadeTrajectories', {});
+    if (!res) return null;
+    this.onConversationsRaw?.(res);
+    return parseConversations(res);
+  }
+
+  /** Diagnostics hook: sees the raw response once per call (used to record its shape). */
+  public onConversationsRaw?: (res: any) => void;
 
   /** Stops the running agent turn (same call as the IDE's stop button). */
   public async cancel(cascadeId: string): Promise<void> {

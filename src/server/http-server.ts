@@ -81,19 +81,20 @@ export class RemoteServer {
   }
 
   public async start(): Promise<{ port: number; host: string }> {
-    await this.sessionManager.start();
-
-    return new Promise((resolve, reject) => {
+    // Claim the port before connecting to the IDE: a window that loses the race to host
+    // (EADDRINUSE) must not be left with a half-started session.
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => reject(err);
+      this.server.once('error', onError);
       this.server.listen(this.port, this.host, () => {
+        this.server.off('error', onError);
         const addr = this.server.address() as any;
         this.port = addr.port;
-        resolve({ port: this.port, host: this.host });
-      });
-
-      this.server.on('error', (err) => {
-        reject(err);
+        resolve();
       });
     });
+    await this.sessionManager.start();
+    return { port: this.port, host: this.host };
   }
 
   public async stop(): Promise<void> {

@@ -15,6 +15,7 @@ let statusBarItem: vscodeTypes.StatusBarItem | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let activeWindowId: string | null = null;
 let hubPort: number = 49222;
+let isHost = false;
 
 export async function activate(context: vscodeTypes.ExtensionContext): Promise<void> {
   // Dynamically resolve 'vscode' API module provided by extension host
@@ -39,96 +40,111 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
   const port = config.get<number>('port', 49222);
   const host = config.get<string>('host') || '0.0.0.0';
   hubPort = port;
-
-  // One language-server connection shared by every window's channel.
-  const lsBridge = process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge();
-  const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge });
-  sessionManager = new SessionManager(adapter, undefined, {
-    hostWindowId: activeWindowId,
-    createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge })
-  });
   const pwaDir = path.join(context.extensionPath, 'src', 'pwa');
-  server = new RemoteServer(sessionManager, { port, host, pwaDir });
-  pairingManager = new PairingManager(sessionManager.auth, port);
+  const identity = () => ({
+    windowId: activeWindowId!,
+    workspaceName,
+    workspacePath: currentWorkspace,
+    isFocused: vscode.window.state.focused,
+    pid: process.pid
+  });
 
-  try {
-    // 1. Primary Window Mode: Successfully bind to port
-    const { port: actualPort } = await server.start();
-    sessionManager.registry.register({
-      windowId: activeWindowId,
-      workspaceName,
-      workspacePath: currentWorkspace,
-      isFocused: vscode.window.state.focused,
-      pid: process.pid
+  // Status bar and commands exist once per window; what they do depends on whether this window hosts.
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem.command = 'ag-remote.showPairingQr';
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+  const showStatus = () => {
+    if (!statusBarItem) return;
+    statusBarItem.text = isHost ? `$(radio-tower) AG-Remote :${port}` : `$(radio-tower) AG-Remote [${workspaceName}]`;
+    statusBarItem.tooltip = isHost
+      ? 'Antigravity Phone Remote Control (Click to Pair)'
+      : `Antigravity Phone Remote Control (Linked to Hub on :${port})`;
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ag-remote.showPairingQr', () => {
+      if (isHost && pairingManager) showPairingPanel(vscode, pairingManager, port);
+      else vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
+    }),
+    vscode.commands.registerCommand('ag-remote.revokePairings', () => {
+      if (!isHost || !pairingManager) {
+        vscode.window.showInformationMessage('AG-Remote: Run this in the window that hosts the server (status bar shows the port).');
+        return;
+      }
+      pairingManager.revokeAllPairings();
+      vscode.window.showInformationMessage('AG-Remote: All active phone pairings revoked. Generated new secret token.');
+    }),
+    vscode.commands.registerCommand('ag-remote.restartServer', async () => {
+      if (server) {
+        await server.stop();
+        await server.start();
+        vscode.window.showInformationMessage(`AG-Remote: Server restarted on port ${port}`);
+      }
+    }),
+    vscode.window.onDidChangeWindowState((e) => {
+      const info = { ...identity(), isFocused: e.focused };
+      if (isHost) sessionManager?.registry.register(info);
+      else registerWithHub(port, info);
+    })
+  );
+
+  /**
+   * Tries to host the phone server in this window. Only one process can hold the port, so when several
+   * windows try at once exactly one wins; the rest get EADDRINUSE and stay linked to the winner.
+   */
+  const becomeHost = async (): Promise<boolean> => {
+    // One language-server connection shared by every window's channel.
+    const lsBridge = process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge();
+    const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge });
+    const sm = new SessionManager(adapter, undefined, {
+      hostWindowId: activeWindowId!,
+      createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge })
     });
-    // The host checks in with its own registry too, or it drops off the phone's window list after 10s.
-    heartbeatTimer = setInterval(() => {
-      sessionManager?.registry.heartbeat(activeWindowId!);
-    }, 4000);
-
-    // Window focus change listener
-    context.subscriptions.push(
-      vscode.window.onDidChangeWindowState((e) => {
-        if (sessionManager) {
-          sessionManager.registry.register({
-            windowId: activeWindowId!,
-            workspaceName,
-            workspacePath: currentWorkspace,
-            isFocused: e.focused,
-            pid: process.pid
-          });
-        }
-      })
-    );
-
-    setupExtensionUi(context, vscode, pairingManager!, actualPort);
-  } catch (err: any) {
-    if (err?.code === 'EADDRINUSE') {
-      // 2. Secondary Window Mode: Hub server already active on this port
-      // Register this window with the primary hub
-      registerWithHub(port, {
-        windowId: activeWindowId,
-        workspaceName,
-        workspacePath: currentWorkspace,
-        isFocused: vscode.window.state.focused,
-        pid: process.pid
-      });
-
-      // Start 4s heartbeat
-      heartbeatTimer = setInterval(() => {
-        sendHubHeartbeat(port, activeWindowId!);
-      }, 4000);
-
-      // Report focus changes to hub
-      context.subscriptions.push(
-        vscode.window.onDidChangeWindowState((e) => {
-          registerWithHub(port, {
-            windowId: activeWindowId!,
-            workspaceName,
-            workspacePath: currentWorkspace,
-            isFocused: e.focused,
-            pid: process.pid
-          });
-        })
-      );
-
-      // Status Bar item for Secondary Window
-      statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-      statusBarItem.text = `$(radio-tower) AG-Remote [${workspaceName}]`;
-      statusBarItem.tooltip = `Antigravity Phone Remote Control (Linked to Hub on :${port})`;
-      statusBarItem.command = 'ag-remote.showPairingQr';
-      statusBarItem.show();
-      context.subscriptions.push(statusBarItem);
-
-      context.subscriptions.push(
-        vscode.commands.registerCommand('ag-remote.showPairingQr', () => {
-          vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
-        })
-      );
-    } else {
-      vscode.window.showErrorMessage(`AG-Remote failed to start: ${err?.message || err}`);
+    const srv = new RemoteServer(sm, { port, host, pwaDir });
+    try {
+      await srv.start();
+    } catch (err: any) {
+      sm.dispose();
+      if (err?.code !== 'EADDRINUSE') vscode.window.showErrorMessage(`AG-Remote failed to start: ${err?.message || err}`);
+      return false;
     }
-  }
+    sessionManager = sm;
+    server = srv;
+    pairingManager = new PairingManager(sm.auth, port);
+    isHost = true;
+    sm.registry.register(identity());
+    showStatus();
+    return true;
+  };
+
+  // A linked window checks in every 4s. If the host is gone (closed or reloaded) it tries to take over;
+  // the phone stays paired because the session token is stored on disk, not in the host window.
+  let takingOver = false;
+  const linkToHub = () => {
+    if (!isHost) registerWithHub(port, identity());
+    showStatus();
+    heartbeatTimer = setInterval(async () => {
+      if (isHost) {
+        sessionManager?.registry.heartbeat(activeWindowId!);
+        return;
+      }
+      const res = await postHubJson(port, '/api/hub/heartbeat', { windowId: activeWindowId });
+      if (res && res.ok === false) {
+        registerWithHub(port, identity()); // a new host that doesn't know us yet
+      } else if (!res && !takingOver) {
+        takingOver = true;
+        // Spread simultaneous attempts a little; the port decides the winner either way.
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1000)));
+        if (!(await becomeHost())) registerWithHub(port, identity());
+        takingOver = false;
+      }
+    }, 4000);
+  };
+
+  // Host if no other window does yet; otherwise link to the window that does.
+  await becomeHost();
+  linkToHub();
 }
 
 function postHubJson(port: number, apiPath: string, data: any): Promise<any> {
@@ -163,51 +179,6 @@ function postHubJson(port: number, apiPath: string, data: any): Promise<any> {
 
 function registerWithHub(port: number, info: any): void {
   postHubJson(port, '/api/hub/register', info);
-}
-
-function sendHubHeartbeat(port: number, windowId: string): void {
-  postHubJson(port, '/api/hub/heartbeat', { windowId });
-}
-
-function setupExtensionUi(
-  context: vscodeTypes.ExtensionContext,
-  vscode: typeof vscodeTypes,
-  pairingMgr: PairingManager,
-  actualPort: number
-) {
-  // Create Status Bar Item
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.text = `$(radio-tower) AG-Remote :${actualPort}`;
-  statusBarItem.tooltip = 'Antigravity Phone Remote Control (Click to Pair)';
-  statusBarItem.command = 'ag-remote.showPairingQr';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
-
-  // Register Command: Show Pairing QR
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ag-remote.showPairingQr', () => {
-      showPairingPanel(vscode, pairingMgr, actualPort);
-    })
-  );
-
-  // Register Command: Revoke Pairings
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ag-remote.revokePairings', () => {
-      pairingMgr.revokeAllPairings();
-      vscode.window.showInformationMessage('AG-Remote: All active phone pairings revoked. Generated new secret token.');
-    })
-  );
-
-  // Register Command: Restart Server
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ag-remote.restartServer', async () => {
-      if (server) {
-        await server.stop();
-        await server.start();
-        vscode.window.showInformationMessage(`AG-Remote: Server restarted on port ${actualPort}`);
-      }
-    })
-  );
 }
 
 export async function deactivate(): Promise<void> {

@@ -144,6 +144,29 @@ async function run() {
   anyAdapter.watcher.stop();
   fs.rmSync(brain, { recursive: true, force: true });
 
+  console.log('\n[Suite 3] Hand-over: another window takes over the port');
+  const { RemoteServer } = await import('../src/server/index.ts');
+  const PORT = 49377;
+  const first = new FakeAdapter('C:/proj/a');
+  const second = new FakeAdapter('C:/proj/b');
+  const smFirst = new SessionManager(first, 'handover-token-1');
+  const smSecond = new SessionManager(second, 'handover-token-1');
+  const srvFirst = new RemoteServer(smFirst, { port: PORT, host: '127.0.0.1' });
+  await srvFirst.start();
+  const srvSecond = new RemoteServer(smSecond, { port: PORT, host: '127.0.0.1' });
+  let code = '';
+  try { await srvSecond.start(); } catch (e: any) { code = e.code; }
+  assert(code === 'EADDRINUSE', 'a second window cannot host while the first one does');
+  assert(!second.connected, 'the losing window does not connect to the IDE');
+
+  await srvFirst.stop();
+  const srvTakeover = new RemoteServer(smSecond, { port: PORT, host: '127.0.0.1' });
+  await srvTakeover.start();
+  assert(second.connected, 'after the host closes, the other window takes over the port');
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/state`, { headers: { Authorization: 'Bearer handover-token-1' } });
+  assert(res.status === 200, 'the phone\'s existing session token still works on the new host');
+  await srvTakeover.stop();
+
   console.log('\n' + '='.repeat(75));
   console.log(`RESULTS: ${passed} passed, ${failed} failed`);
   console.log('='.repeat(75));

@@ -46,21 +46,30 @@ export class SessionManager extends EventEmitter {
       });
     }
 
-    this.registry.on('change', (windows: RegisteredWindow[]) => {
-      if (this.isMultiWindow()) this.syncChannels(windows);
-      this.emit('adapter_event', { type: 'windows_changed', windows } as any);
-    });
+    this.registry.on('change', this.onRegistryChange);
+    this.registry.on('selected', this.onRegistrySelected);
+  }
 
-    this.registry.on('selected', (win: RegisteredWindow) => {
-      // In multi-window mode every window keeps its own channel; selection is only the phone's default tab.
-      if (this.isMultiWindow()) return;
-      if (this.adapter.setWorkspace) {
-        this.adapter.setWorkspace(win.workspacePath);
-      }
-      if (win.activeConversationId && this.adapter.setActiveSession) {
-        this.adapter.setActiveSession(win.activeConversationId);
-      }
-    });
+  private onRegistryChange = (windows: RegisteredWindow[]) => {
+    if (this.isMultiWindow()) this.syncChannels(windows);
+    this.emit('adapter_event', { type: 'windows_changed', windows } as any);
+  };
+
+  private onRegistrySelected = (win: RegisteredWindow) => {
+    // In multi-window mode every window keeps its own channel; selection is only the phone's default tab.
+    if (this.isMultiWindow()) return;
+    if (this.adapter.setWorkspace) {
+      this.adapter.setWorkspace(win.workspacePath);
+    }
+    if (win.activeConversationId && this.adapter.setActiveSession) {
+      this.adapter.setActiveSession(win.activeConversationId);
+    }
+  };
+
+  /** Detaches from the shared window registry (a window that failed to become host). */
+  public dispose(): void {
+    this.registry.off('change', this.onRegistryChange);
+    this.registry.off('selected', this.onRegistrySelected);
   }
 
   private isMultiWindow(): boolean {

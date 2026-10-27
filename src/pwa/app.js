@@ -81,60 +81,149 @@
     connectWebSocket();
   }
 
+  // Tabs: one per open IDE window, each with its own conversation, status and approval.
+  // Key '' holds the single conversation when the server reports no windows.
+  const tabBar = document.getElementById('tabBar');
+  const tabs = new Map();
+  let activeTabId = '';
+  try { activeTabId = localStorage.getItem('ag_remote_tab') || ''; } catch (_) {}
+
+  function tabFor(id) {
+    const key = id || '';
+    if (!tabs.has(key)) tabs.set(key, { name: 'Antigravity', status: 'disconnected', messages: [], approval: null, title: '' });
+    return tabs.get(key);
+  }
+
+  function windowQuery(id = activeTabId) {
+    return id ? `?windowId=${encodeURIComponent(id)}` : '';
+  }
+
+  function withWindow(body, id = activeTabId) {
+    return id ? { ...body, windowId: id } : body;
+  }
+
+  /** Adds tabs for new windows and drops tabs of closed ones. Returns the ids that are new. */
+  function syncTabs(windows, selectedId) {
+    const added = [];
+    const live = new Set(windows.map(w => w.windowId));
+    for (const w of windows) {
+      if (!tabs.has(w.windowId)) added.push(w.windowId);
+      tabFor(w.windowId).name = w.workspaceName || 'Workspace';
+    }
+    for (const id of [...tabs.keys()]) {
+      if (!live.has(id) && (windows.length > 0 || id !== '')) tabs.delete(id);
+    }
+    if (!tabs.has(activeTabId)) {
+      activeTabId = (selectedId && tabs.has(selectedId)) ? selectedId : ([...tabs.keys()][0] || '');
+    }
+    renderTabBar();
+    return added;
+  }
+
+  async function fetchTabState(id) {
+    const res = await fetch(`/api/state${windowQuery(id)}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const snap = await res.json();
+    const t = tabFor(id);
+    t.status = snap.status;
+    t.messages = Array.isArray(snap.messages) ? snap.messages : [];
+    t.approval = snap.pendingApproval || null;
+  }
+
   async function resyncState() {
     if (!token) return;
     try {
-      const res = await fetch('/api/state', {
+      let windows = [];
+      let selectedId = null;
+      const winRes = await fetch('/api/windows', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-
-      if (res.status === 401) {
+      if (winRes.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true });
+      if (winRes.ok) {
+        const winData = await winRes.json();
+        windows = winData.windows || [];
+        selectedId = winData.selectedId;
+      }
+      syncTabs(windows, selectedId);
+      if (tabs.size === 0) tabFor('');
+      await Promise.all([...tabs.keys()].map(id => fetchTabState(id)));
+      renderActiveTab();
+    } catch (err) {
+      if (err && err.unauthorized) {
         showToast('Session token invalid or expired. Please re-pair.');
         localStorage.removeItem('ag_remote_token');
         pairingModal.classList.remove('hidden');
         return;
       }
-
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
-
-      const snapshot = await res.json();
-      renderSnapshot(snapshot);
-      updateActiveSessionLabel();
-    } catch (err) {
       updateStatus('disconnected', 'Disconnected');
+    }
+  }
+
+  function renderTabBar() {
+    tabBar.classList.toggle('hidden', tabs.size < 2);
+    tabBar.innerHTML = '';
+    for (const [id, t] of tabs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tab';
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', String(id === activeTabId));
+      btn.dataset.status = t.approval ? 'awaiting_approval' : t.status;
+      const label = document.createElement('span');
+      label.className = 'tab-label';
+      label.textContent = t.name;
+      const badge = document.createElement('span');
+      badge.className = 'tab-badge';
+      badge.setAttribute('aria-hidden', 'true');
+      btn.append(label, badge);
+      btn.setAttribute('aria-label', `${t.name}${t.approval ? ', needs you' : t.status === 'generating' ? ', working' : ''}`);
+      btn.addEventListener('click', () => switchTab(id));
+      tabBar.appendChild(btn);
+    }
+    const active = tabBar.querySelector('[aria-selected="true"]');
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function renderActiveTab() {
+    const t = tabFor(activeTabId);
+    renderSnapshot({ status: t.status, messages: t.messages, pendingApproval: t.approval });
+    renderTabBar();
+    updateActiveSessionLabel();
+  }
+
+  function switchTab(id) {
+    if (!tabs.has(id)) return;
+    activeTabId = id;
+    try { localStorage.setItem('ag_remote_tab', id); } catch (_) {}
+    hideToast();
+    renderActiveTab();
+    // Keeps older clients and the no-windowId default in step with what this phone shows.
+    if (id) {
+      fetch('/api/windows/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ windowId: id })
+      }).catch(() => {});
     }
   }
 
   async function updateActiveSessionLabel() {
     if (!token) return;
+    const id = activeTabId;
+    const t = tabFor(id);
+    sessionLabel.textContent = t.title || t.name;
     try {
-      // 1. Try checking active windows from coordinator hub
-      const winRes = await fetch('/api/windows', {
+      const res = await fetch(`/api/sessions${windowQuery(id)}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (winRes.ok) {
-        const winData = await winRes.json();
-        const currentWin = winData.windows?.find(w => w.windowId === winData.selectedId) || winData.windows?.[0];
-        if (currentWin) {
-          sessionLabel.textContent = `[${currentWin.workspaceName}] Active`;
-          return;
-        }
-      }
-
-      // 2. Fallback to sessions endpoint
-      const res = await fetch('/api/sessions', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const current = data.sessions?.find(s => s.isCurrent);
-        if (current) {
-          const wsName = current.workspace ? current.workspace.split(/[\\/]/).pop() : '';
-          sessionLabel.textContent = wsName ? `[${wsName}] ${current.title}` : current.title;
-        }
-      }
+      if (!res.ok || id !== activeTabId) return;
+      const data = await res.json();
+      const current = data.sessions?.find(s => s.isCurrent);
+      t.title = current ? current.title : '';
+      sessionLabel.textContent = tabs.size > 1 ? (t.title || t.name) : (t.title ? `${t.name} · ${t.title}` : t.name);
     } catch (_) {}
   }
 
@@ -152,7 +241,6 @@
       ws.onopen = () => {
         isReconnecting = false;
         reconnectAttempts = 0;
-        sessionLabel.textContent = 'Active Session';
         resyncState();
       };
 
@@ -188,37 +276,76 @@
     }, delay);
   }
 
+  async function handleWindowsChanged(windows) {
+    const added = syncTabs(windows || [], null);
+    await Promise.all(added.map(id => fetchTabState(id).catch(() => {})));
+    if (!tabs.has(activeTabId) || added.includes(activeTabId)) renderActiveTab();
+  }
+
   function handleAdapterEvent(event) {
     if (!event) return;
+    if (event.type === 'windows_changed') {
+      handleWindowsChanged(event.windows);
+      return;
+    }
+
+    // Events without a windowId come from a single-window server and belong to the visible tab.
+    const id = event.windowId || (tabs.has(activeTabId) ? activeTabId : '');
+    if (event.windowId && !tabs.has(event.windowId)) return; // window not known yet; windows_changed follows
+    const t = tabFor(id);
+    const visible = id === activeTabId;
 
     if (event.type === 'message') {
-      appendChatMessage(event.message);
+      // Drop the optimistic copy of a prompt once the IDE records it.
+      if (event.message.role === 'user') {
+        const i = t.messages.findIndex(m => String(m.id).startsWith('local-') && m.text === event.message.text);
+        if (i >= 0) {
+          const [dup] = t.messages.splice(i, 1);
+          if (visible) chatFeed.querySelector(`[data-msg-id="${dup.id}"]`)?.remove();
+        }
+      }
+      t.messages.push(event.message);
+      if (visible) appendChatMessage(event.message);
     } else if (event.type === 'approval_requested') {
-      showApproval(event.approval);
-      updateStatus('awaiting_approval', 'Approval Needed');
+      t.approval = event.approval;
+      t.status = 'awaiting_approval';
+      if (visible) {
+        showApproval(event.approval);
+        updateStatus('awaiting_approval');
+      } else {
+        showToast(`${t.name} needs you`, { label: 'View', run: () => switchTab(id) });
+        if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
+      }
     } else if (event.type === 'status_changed') {
-      updateStatus(event.status);
-      if (event.status !== 'awaiting_approval') {
-        hideApproval();
+      t.status = event.status;
+      if (event.status !== 'awaiting_approval') t.approval = null;
+      if (visible) {
+        updateStatus(event.status);
+        if (event.status !== 'awaiting_approval') hideApproval();
       }
     } else if (event.type === 'session_changed') {
       // The IDE moved to another conversation; its messages follow as 'message' events.
-      chatFeed.innerHTML = '';
-      emptyState.classList.remove('hidden');
-      hideApproval();
-      updateActiveSessionLabel();
+      t.messages = [];
+      t.approval = null;
+      t.title = '';
+      if (visible) {
+        renderSnapshot({ status: t.status, messages: [], pendingApproval: null });
+        updateActiveSessionLabel();
+      }
     } else if (event.type === 'adapter_error') {
-      showToast(event.error);
+      if (visible) showToast(event.error);
     }
+    renderTabBar();
   }
 
   // 4. UI Rendering Functions
   function renderSnapshot(snapshot) {
     updateStatus(snapshot.status);
 
+    // The empty state lives inside the feed, so keep it when clearing.
+    chatFeed.replaceChildren(emptyState);
     if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
       emptyState.classList.add('hidden');
-      chatFeed.innerHTML = '';
       snapshot.messages.forEach(msg => appendChatMessage(msg, false));
       scrollToBottom();
     } else {
@@ -256,6 +383,7 @@
 
     const bubble = document.createElement('div');
     bubble.className = `chat-message ${msg.role === 'user' ? 'user' : 'agent'}`;
+    bubble.dataset.msgId = msg.id;
 
     const author = document.createElement('div');
     author.className = 'chat-author';
@@ -425,15 +553,11 @@
   async function submitApprovalResponse(responseText) {
     if (!currentApproval || !token) return;
     const approvalId = currentApproval.id;
+    const tabId = activeTabId;
     hideApproval();
 
     // Optimistically show user response in chat
-    appendChatMessage({
-      id: `local-${Date.now()}`,
-      role: 'user',
-      text: responseText,
-      ts: Date.now()
-    });
+    addLocalMessage(responseText, tabId);
 
     try {
       const res = await fetch('/api/approve', {
@@ -442,7 +566,7 @@
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: approvalId, response: responseText })
+        body: JSON.stringify(withWindow({ id: approvalId, response: responseText }, tabId))
       });
 
       if (!res.ok) {
@@ -455,30 +579,46 @@
   }
 
   let toastTimer = null;
-  function showToast(msg) {
+  let toastAction = null;
+  const toastActionBtn = document.getElementById('toastAction');
+  toastActionBtn.addEventListener('click', () => {
+    const run = toastAction;
+    hideToast();
+    if (run) run();
+  });
+
+  /** Snackbar; `action` adds a button such as { label: 'View', run: fn }. */
+  function showToast(msg, action) {
     toastMessage.textContent = msg;
+    toastAction = action ? action.run : null;
+    toastActionBtn.textContent = action ? action.label : '';
+    toastActionBtn.classList.toggle('hidden', !action);
     toastBanner.classList.remove('hidden');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, 6000);
+    toastTimer = setTimeout(hideToast, action ? 10000 : 6000);
   }
 
   function hideToast() {
     clearTimeout(toastTimer);
+    toastAction = null;
     toastBanner.classList.add('hidden');
+  }
+
+  function addLocalMessage(text, tabId) {
+    const msg = { id: `local-${Date.now()}`, role: 'user', text, ts: Date.now() };
+    tabFor(tabId).messages.push(msg);
+    if (tabId === activeTabId) appendChatMessage(msg);
   }
 
   // 5. User Action Handlers
   async function sendPrompt(text) {
     if (!text.trim() || !token) return;
+    const tabId = activeTabId;
 
     // Optimistic UI append
-    appendChatMessage({
-      id: `local-${Date.now()}`,
-      role: 'user',
-      text: text.trim(),
-      ts: Date.now()
-    });
+    addLocalMessage(text.trim(), tabId);
     promptInput.value = '';
+    promptInput.style.height = 'auto';
     btnSend.disabled = true;
 
     try {
@@ -488,7 +628,7 @@
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ text: text.trim() })
+        body: JSON.stringify(withWindow({ text: text.trim() }, tabId))
       });
 
       if (!res.ok) {
@@ -509,6 +649,7 @@
   async function sendApprovalDecision(endpoint, payload, failMsg) {
     if (!currentApproval || !token) return;
     const approvalId = currentApproval.id;
+    const tabId = activeTabId;
     setApprovalBusy(true);
     try {
       const res = await fetch(endpoint, {
@@ -517,10 +658,13 @@
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: approvalId, ...payload })
+        body: JSON.stringify(withWindow({ id: approvalId, ...payload }, tabId))
       });
       if (res.ok) {
+        const t = tabFor(tabId);
+        if (t.approval && t.approval.id === approvalId) t.approval = null;
         if (currentApproval && currentApproval.id === approvalId) hideApproval();
+        renderTabBar();
         if (navigator.vibrate) navigator.vibrate(20);
         return;
       }
@@ -549,7 +693,8 @@
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
-        }
+        },
+        body: JSON.stringify(withWindow({}))
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -716,7 +861,8 @@
       } catch (_) {}
 
       // 2. Fetch sessions
-      const res = await fetch('/api/sessions', {
+      const tabId = activeTabId;
+      const res = await fetch(`/api/sessions${windowQuery(tabId)}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = res.ok ? await res.json() : { sessions: [] };
@@ -730,33 +876,20 @@
         list.appendChild(winHeader);
 
         windows.forEach(w => {
-          const isSelected = w.windowId === selectedWinId;
+          const isSelected = tabs.has(activeTabId) ? w.windowId === activeTabId : w.windowId === selectedWinId;
           const wItem = document.createElement('div');
           wItem.className = `session-item ${isSelected ? 'current' : ''}`;
           wItem.innerHTML = `
             <div class="session-item-title">${escapeHtml(w.workspaceName)} ${w.isFocused ? '<span class="focused-tag">Focused</span>' : ''}</div>
             <div class="session-item-sub">
               <span>${escapeHtml(w.workspacePath)}</span>
-              <span>${isSelected ? 'Controlling' : ''}</span>
+              <span>${isSelected ? 'Showing' : ''}</span>
             </div>
           `;
           wItem.addEventListener('click', async () => {
-            wItem.classList.add('busy');
-            try {
-              const selRes = await fetch('/api/windows/select', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ windowId: w.windowId })
-              });
-              if (selRes.ok) {
-                modal.classList.add('hidden');
-                await resyncState();
-                await updateActiveSessionLabel();
-              }
-            } catch (_) {}
+            modal.classList.add('hidden');
+            if (!tabs.has(w.windowId)) await resyncState();
+            switchTab(w.windowId);
           });
           list.appendChild(wItem);
         });
@@ -769,7 +902,7 @@
       // Render workspace sessions
       const sessHeader = document.createElement('div');
       sessHeader.className = 'list-subheader';
-      sessHeader.textContent = 'Conversations';
+      sessHeader.textContent = tabId && tabs.has(tabId) ? `Conversations in ${tabFor(tabId).name}` : 'Conversations';
       list.appendChild(sessHeader);
 
       if (!data.sessions || data.sessions.length === 0) {
@@ -803,12 +936,12 @@
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
               },
-              body: JSON.stringify({ id: s.id })
+              body: JSON.stringify(withWindow({ id: s.id }, tabId))
             });
             if (switchRes.ok) {
               modal.classList.add('hidden');
-              await resyncState();
-              await updateActiveSessionLabel();
+              await fetchTabState(tabId).catch(() => {});
+              if (tabId === activeTabId) renderActiveTab();
             } else {
               showToast('Could not switch to selected session');
             }

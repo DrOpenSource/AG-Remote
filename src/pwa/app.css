@@ -260,6 +260,78 @@ body[data-status="generating"] .progress { opacity: 1; }
   to { transform: translateX(260%); }
 }
 
+/* Window tabs (Material primary tabs, scrollable) */
+.tab-bar {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--md-surface-container);
+  border-bottom: 1px solid var(--md-outline-variant);
+  flex-shrink: 0;
+}
+.tab-bar::-webkit-scrollbar { display: none; }
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 96px;
+  max-width: 200px;
+  height: 48px;
+  padding: 0 16px;
+  border: none;
+  background: none;
+  color: var(--md-on-surface-variant);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tab:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.tab[aria-selected="true"] { color: var(--md-primary); }
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--md-primary);
+}
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status badge: dot while working, "!" when the window needs you */
+.tab-badge { display: none; }
+.tab[data-status="generating"] .tab-badge {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--md-primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.tab[data-status="awaiting_approval"] .tab-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--md-error);
+  color: var(--md-surface);
+  font-size: 11px;
+  font-weight: 700;
+}
+.tab[data-status="awaiting_approval"] .tab-badge::before { content: "!"; }
+
 /* Approval card */
 .approval-card {
   margin: 12px 12px 0;
@@ -640,6 +712,16 @@ body[data-status="generating"] .progress { opacity: 1; }
 /* Clear the Stop button while it is showing */
 body[data-status="generating"] .snackbar { bottom: calc(144px + var(--safe-bottom)); }
 .snackbar-message { flex: 1; font-size: 14px; }
+.snackbar-action {
+  min-height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--shape-full);
+  background: none;
+  color: var(--md-primary-container);
+  font-weight: 500;
+  cursor: pointer;
+}
 .snackbar-close {
   width: 40px;
   height: 40px;

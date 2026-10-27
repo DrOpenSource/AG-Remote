@@ -234,11 +234,12 @@
 
   function updateStatus(status, customText) {
     statusBadge.setAttribute('data-status', status || 'disconnected');
+    document.body.dataset.status = status || 'disconnected';
     const labels = {
-      'idle': '● Ready',
-      'generating': '⚡ Thinking...',
-      'awaiting_approval': '🔔 Action Required',
-      'disconnected': '✖ Offline'
+      'idle': 'Ready',
+      'generating': 'Working',
+      'awaiting_approval': 'Needs you',
+      'disconnected': 'Offline'
     };
     statusText.textContent = customText || labels[status] || status;
 
@@ -286,12 +287,19 @@
 
   function showApproval(approval) {
     currentApproval = approval;
-    approvalKind.textContent = approval.kind;
+    const kindLabels = {
+      run_command: 'Terminal',
+      ask_question: 'Question',
+      write_to_file: 'New file',
+      replace_file_content: 'File edit',
+      multi_replace_file_content: 'File edit'
+    };
+    approvalKind.textContent = kindLabels[approval.kind] || approval.kind;
 
     const isQuestion = approval.kind === 'ask_question' || (Array.isArray(approval.options) && approval.options.length > 0);
 
     if (isQuestion) {
-      if (approvalBadge) approvalBadge.textContent = '❓ Question from Agent';
+      if (approvalBadge) approvalBadge.textContent = 'The agent has a question';
       approvalDesc.textContent = approval.question || approval.description || 'Please select an option:';
       approvalDetail.classList.add('hidden');
       approvalActions.classList.add('hidden');
@@ -339,8 +347,7 @@
 
       const btnSubmitChoice = document.createElement('button');
       btnSubmitChoice.className = 'btn btn-approve';
-      btnSubmitChoice.style.width = '100%';
-      btnSubmitChoice.textContent = 'Submit Selected Answer';
+      btnSubmitChoice.textContent = 'Submit answer';
       btnSubmitChoice.disabled = true;
       btnSubmitChoice.addEventListener('click', () => {
         if (selectedOptions.size > 0) {
@@ -355,11 +362,9 @@
       writeInBox.className = 'option-writein';
       const writeInInput = document.createElement('input');
       writeInInput.type = 'text';
-      writeInInput.placeholder = 'Or type custom reply...';
+      writeInInput.placeholder = 'Or type your own reply';
       const btnWriteInSubmit = document.createElement('button');
-      btnWriteInSubmit.className = 'btn btn-primary';
-      btnWriteInSubmit.style.fontSize = '12px';
-      btnWriteInSubmit.style.padding = '8px 12px';
+      btnWriteInSubmit.className = 'btn btn-always';
       btnWriteInSubmit.textContent = 'Reply';
       const handleWriteIn = () => {
         const text = writeInInput.value.trim();
@@ -380,7 +385,7 @@
 
     } else {
       // Standard tool confirmation (e.g. run_command, write_to_file)
-      if (approvalBadge) approvalBadge.textContent = '🔔 Action Permission Required';
+      if (approvalBadge) approvalBadge.textContent = 'Permission needed';
       approvalDesc.textContent = approval.description || 'Pending confirmation';
       approvalDetail.textContent = approval.detail || JSON.stringify(approval, null, 2);
       approvalDetail.classList.remove('hidden');
@@ -449,12 +454,16 @@
     }
   }
 
+  let toastTimer = null;
   function showToast(msg) {
     toastMessage.textContent = msg;
     toastBanner.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, 6000);
   }
 
   function hideToast() {
+    clearTimeout(toastTimer);
     toastBanner.classList.add('hidden');
   }
 
@@ -590,7 +599,7 @@
     btnSend.disabled = promptInput.value.trim().length === 0;
     // Auto-expand textarea
     promptInput.style.height = 'auto';
-    promptInput.style.height = `${Math.min(promptInput.scrollHeight, 100)}px`;
+    promptInput.style.height = `${Math.min(promptInput.scrollHeight, 120)}px`;
   });
 
   promptForm.addEventListener('submit', (e) => {
@@ -688,7 +697,7 @@
     const list = document.getElementById('sessionsList');
     if (!modal || !list) return;
 
-    list.innerHTML = '<div style="color:#94a3b8; font-size:12px; padding:8px;">Loading active windows & sessions...</div>';
+    list.innerHTML = '<div class="list-empty">Loading windows and conversations...</div>';
     modal.classList.remove('hidden');
 
     try {
@@ -716,8 +725,8 @@
       // If active windows are registered, render them at the top
       if (windows.length > 0) {
         const winHeader = document.createElement('div');
-        winHeader.style.cssText = 'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#6366f1; font-weight:700; margin:4px 0 6px 4px;';
-        winHeader.textContent = `🟢 Active IDE Windows (${windows.length})`;
+        winHeader.className = 'list-subheader';
+        winHeader.textContent = `Open IDE windows (${windows.length})`;
         list.appendChild(winHeader);
 
         windows.forEach(w => {
@@ -725,14 +734,14 @@
           const wItem = document.createElement('div');
           wItem.className = `session-item ${isSelected ? 'current' : ''}`;
           wItem.innerHTML = `
-            <div class="session-item-title">${isSelected ? '⭐ ' : ''}📁 ${escapeHtml(w.workspaceName)} ${w.isFocused ? '<span style="font-size:11px; color:#10b981;">(Focused)</span>' : ''}</div>
+            <div class="session-item-title">${escapeHtml(w.workspaceName)} ${w.isFocused ? '<span class="focused-tag">Focused</span>' : ''}</div>
             <div class="session-item-sub">
               <span>${escapeHtml(w.workspacePath)}</span>
-              <span>PID: ${w.pid || 'Active'}</span>
+              <span>${isSelected ? 'Controlling' : ''}</span>
             </div>
           `;
           wItem.addEventListener('click', async () => {
-            wItem.style.opacity = '0.5';
+            wItem.classList.add('busy');
             try {
               const selRes = await fetch('/api/windows/select', {
                 method: 'POST',
@@ -753,19 +762,19 @@
         });
 
         const divider = document.createElement('div');
-        divider.style.cssText = 'height:1px; background:#334155; margin:10px 0;';
+        divider.className = 'list-divider';
         list.appendChild(divider);
       }
 
       // Render workspace sessions
       const sessHeader = document.createElement('div');
-      sessHeader.style.cssText = 'font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#94a3b8; font-weight:700; margin:4px 0 6px 4px;';
-      sessHeader.textContent = '💬 Sessions in Workspace';
+      sessHeader.className = 'list-subheader';
+      sessHeader.textContent = 'Conversations';
       list.appendChild(sessHeader);
 
       if (!data.sessions || data.sessions.length === 0) {
         const emptyMsg = document.createElement('div');
-        emptyMsg.style.cssText = 'color:#94a3b8; font-size:12px; padding:8px;';
+        emptyMsg.className = 'list-empty';
         emptyMsg.textContent = 'No matching conversations found.';
         list.appendChild(emptyMsg);
         return;
@@ -778,16 +787,16 @@
         const ago = formatTimeAgo(s.mtime);
 
         item.innerHTML = `
-          <div class="session-item-title">${s.isCurrent ? '⭐ ' : ''}${escapeHtml(s.title || 'Untitled Session')}</div>
+          <div class="session-item-title">${escapeHtml(s.title || 'Untitled conversation')}</div>
           <div class="session-item-sub">
-            <span>📁 ${escapeHtml(wsName)}</span>
+            <span>${escapeHtml(wsName)}</span>
             <span>${ago}</span>
           </div>
         `;
 
         item.addEventListener('click', async () => {
           try {
-            item.style.opacity = '0.5';
+            item.classList.add('busy');
             const switchRes = await fetch('/api/sessions/select', {
               method: 'POST',
               headers: {
@@ -811,7 +820,7 @@
         list.appendChild(item);
       });
     } catch (err) {
-      list.innerHTML = '<div style="color:#f87171; font-size:12px; padding:8px;">Failed to load sessions.</div>';
+      list.innerHTML = '<div class="list-empty error">Could not load conversations.</div>';
     }
   }
 

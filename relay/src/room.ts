@@ -2,15 +2,20 @@ import { DurableObject } from 'cloudflare:workers';
 
 /**
  * One room per paired laptop. Holds one host socket (the extension) and a few phone sockets.
- * Host messages go to every phone; phone messages go to the host only.
- * Message bodies are forwarded untouched: from Phase 2 they are ciphertext the relay can't read.
+ * Text frames only. Message bodies ("d") are forwarded untouched; they are end-to-end encrypted
+ * (src/e2e/e2e.js), so the relay can't read them.
  * Uses WebSocket hibernation, so an idle room costs nothing while sockets stay open.
+ *
+ * Routing:
+ *   phone sends raw text      -> host receives {"from":phoneId,"d":text}
+ *   host sends {"to":id,"d"}  -> that phone receives d
+ *   host sends {"d"}          -> every phone receives d
  *
  * Messages the relay itself sends are JSON with a top-level "relay" key:
  *   {"relay":"hello","you":id,"role":role,"peers":[{role,id}]}  to a socket that just joined
  *   {"relay":"peer-joined","role":role,"peer":id}
  *   {"relay":"peer-left","role":role,"peer":id}
- * Clients must not send messages starting with {"relay"; the relay drops them.
+ * A host "d" starting with {"relay" is dropped, so phones can trust that key came from the relay.
  * The text "ping" is answered with "pong" without waking the room.
  */
 
@@ -27,11 +32,14 @@ export const MAX_PHONES = 4;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 export const RATE_WINDOW_MS = 10_000;
 export const RATE_MAX_MESSAGES = 200;
+// The host sends a separately encrypted copy of each update to every phone.
+export const HOST_RATE_MAX_MESSAGES = RATE_MAX_MESSAGES * MAX_PHONES;
 
 export const CLOSE_REPLACED = 4001;
 export const CLOSE_ROOM_FULL = 4002;
 export const CLOSE_TOO_LARGE = 4003;
 export const CLOSE_RATE_LIMITED = 4004;
+export const CLOSE_BINARY = 4005;
 
 const encoder = new TextEncoder();
 
@@ -75,8 +83,11 @@ export class Room extends DurableObject {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const info = ws.deserializeAttachment() as SocketInfo;
 
-    const size = typeof message === 'string' ? encoder.encode(message).byteLength : message.byteLength;
-    if (size > MAX_MESSAGE_BYTES) {
+    if (typeof message !== 'string') {
+      ws.close(CLOSE_BINARY, 'text frames only');
+      return;
+    }
+    if (encoder.encode(message).byteLength > MAX_MESSAGE_BYTES) {
       ws.close(CLOSE_TOO_LARGE, 'message too large');
       return;
     }
@@ -88,17 +99,35 @@ export class Room extends DurableObject {
     }
     info.count++;
     ws.serializeAttachment(info);
-    if (info.count > RATE_MAX_MESSAGES) {
+    if (info.count > (info.role === 'host' ? HOST_RATE_MAX_MESSAGES : RATE_MAX_MESSAGES)) {
       ws.close(CLOSE_RATE_LIMITED, 'rate limited');
       return;
     }
 
-    if (typeof message === 'string' && message.startsWith('{"relay"')) return;
+    if (info.role === 'phone') {
+      this.deliver(this.ctx.getWebSockets('host'), `{"from":${JSON.stringify(info.id)},"d":${JSON.stringify(message)}}`);
+      return;
+    }
 
-    const targets = info.role === 'host' ? this.ctx.getWebSockets('phone') : this.ctx.getWebSockets('host');
+    let frame: { to?: unknown; d?: unknown };
+    try {
+      frame = JSON.parse(message);
+    } catch {
+      return;
+    }
+    if (typeof frame?.d !== 'string' || frame.d.startsWith('{"relay"')) return;
+    const phones = this.ctx.getWebSockets('phone');
+    const targets =
+      typeof frame.to === 'string'
+        ? phones.filter((ws) => (ws.deserializeAttachment() as SocketInfo | null)?.id === frame.to)
+        : phones;
+    this.deliver(targets, frame.d);
+  }
+
+  private deliver(targets: WebSocket[], text: string): void {
     for (const target of targets) {
       try {
-        target.send(message);
+        target.send(text);
       } catch {
         // Socket is closing; its close handler announces it.
       }

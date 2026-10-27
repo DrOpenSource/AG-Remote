@@ -3,6 +3,7 @@
 // Against a deployed relay: RELAY_URL=https://remote.taqnik.in npm test
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import crypto from 'crypto';
+import { HostE2E, PhoneE2E, MemoryPhoneRegistry, generateIdentity } from '../../src/e2e/e2e.js';
 
 const LOCAL_URL = 'http://127.0.0.1:8787';
 const BASE = process.env.RELAY_URL || LOCAL_URL;
@@ -34,14 +35,27 @@ class TestClient {
   closeCode: number | null = null;
   private waiters: (() => void)[] = [];
 
+  raw: string[] = [];
+  onRaw: ((text: string) => void) | null = null;
+
   constructor(room: string, role: 'host' | 'phone') {
     this.ws = new WebSocket(`${WS_BASE}/ws/${room}?role=${role}`);
     this.ws.addEventListener('message', (e) => {
       const data = String(e.data);
+      this.raw.push(data);
+      this.onRaw?.(data);
       let parsed: any = data;
       try {
         parsed = JSON.parse(data);
       } catch {}
+      // Host frames from phones arrive as {"from":id,"d":text}; unwrap for easy matching.
+      if (role === 'host' && typeof parsed?.from === 'string' && typeof parsed.d === 'string') {
+        let inner: any;
+        try {
+          inner = JSON.parse(parsed.d);
+        } catch {}
+        parsed = inner && typeof inner === 'object' ? { ...inner, _from: parsed.from } : { _raw: parsed.d, _from: parsed.from };
+      }
       this.messages.push(parsed);
       this.wake();
     });
@@ -80,8 +94,13 @@ class TestClient {
     return this.messages.some(pred);
   }
 
-  send(data: string) {
+  send(data: string | Uint8Array) {
     this.ws.send(data);
+  }
+
+  /** Host only: wraps a message in the relay's {"to","d"} frame. */
+  sendTo(obj: unknown, to?: string) {
+    this.ws.send(JSON.stringify(to ? { to, d: JSON.stringify(obj) } : { d: JSON.stringify(obj) }));
   }
 
   close() {
@@ -137,35 +156,47 @@ async function runTests() {
   assert(joined?.role === 'phone' && joined.peer === phoneA.messages[0].you, 'host told that the phone joined');
 
   console.log('\n[3] Forwarding');
-  host.send(JSON.stringify({ type: 'snapshot', n: 1 }));
-  assert((await phoneA.waitFor((m) => m?.type === 'snapshot'))?.n === 1, 'host -> phone delivered');
+  const idA = phoneA.messages[0].you;
+  host.sendTo({ type: 'snapshot', n: 1 });
+  assert((await phoneA.waitFor((m) => m?.type === 'snapshot'))?.n === 1, 'host -> phone delivered (d unwrapped)');
   phoneA.send(JSON.stringify({ type: 'approve', id: 'x' }));
-  assert((await host.waitFor((m) => m?.type === 'approve'))?.id === 'x', 'phone -> host delivered');
+  const fromA = await host.waitFor((m) => m?.type === 'approve');
+  assert(fromA?.id === 'x' && fromA._from === idA, 'phone -> host delivered, stamped with the sender id');
 
   const phoneB = await connect(room, 'phone');
+  const idB = phoneB.messages[0].you;
   assert(phoneB.messages[0].peers.length === 1, 'second phone sees only the host, not the other phone');
-  await host.waitFor((m) => m?.relay === 'peer-joined' && m.peer === phoneB.messages[0].you);
+  await host.waitFor((m) => m?.relay === 'peer-joined' && m.peer === idB);
   phoneA.send(JSON.stringify({ type: 'from-a' }));
   await host.waitFor((m) => m?.type === 'from-a');
   await sleep(300);
   assert(!phoneB.has((m) => m?.type === 'from-a'), 'phone -> phone is never forwarded');
   assert(!phoneB.has((m) => m?.relay === 'peer-joined' && m.role === 'phone'), 'phones are not told about other phones');
-  host.send(JSON.stringify({ type: 'to-all' }));
+  host.sendTo({ type: 'to-all' });
   assert(
     (await phoneA.waitFor((m) => m?.type === 'to-all')) !== null && (await phoneB.waitFor((m) => m?.type === 'to-all')) !== null,
-    'host message reaches every phone'
+    'host message without "to" reaches every phone'
   );
-
-  phoneA.send('{"relay":"peer-left","role":"host","peer":"fake"}');
+  host.sendTo({ type: 'only-b' }, idB);
+  await phoneB.waitFor((m) => m?.type === 'only-b');
   await sleep(300);
-  assert(!host.has((m) => m?.peer === 'fake'), 'client-sent relay control message is dropped');
+  assert(phoneB.has((m) => m?.type === 'only-b') && !phoneA.has((m) => m?.type === 'only-b'), 'host message with "to" reaches only that phone');
+
+  host.sendTo({ relay: 'peer-left', role: 'host', peer: 'fake' });
+  host.send('not json');
+  await sleep(300);
+  assert(!phoneA.has((m) => m?.peer === 'fake'), 'host cannot fake a relay presence message');
+  assert(host.closeCode === null, 'malformed host frame is ignored, not fatal');
+  phoneA.send('{"relay":"peer-left","role":"phone","peer":"fake"}');
+  const spoof = await host.waitFor((m) => m?.relay === 'peer-left' && m.peer === 'fake');
+  assert(spoof?._from === idA, 'phone cannot fake one either (arrives wrapped with its id)');
 
   phoneA.send('ping');
   assert((await phoneA.waitFor((m) => m === 'pong')) === 'pong', 'ping answered with pong');
 
   const other = newRoom();
   const otherHost = await connect(other, 'host');
-  host.send(JSON.stringify({ type: 'room-isolation' }));
+  host.sendTo({ type: 'room-isolation' });
   await phoneA.waitFor((m) => m?.type === 'room-isolation');
   await sleep(300);
   assert(!otherHost.has((m) => m?.type === 'room-isolation'), 'rooms are isolated');
@@ -181,7 +212,16 @@ async function runTests() {
   assert((await phoneD.waitClosed()) === 4003, 'message over 64 KB closed with 4003');
 
   for (let i = 0; i < 205; i++) phoneC.send(JSON.stringify({ type: 'flood', i }));
-  assert((await phoneC.waitClosed()) === 4004, 'more than 200 messages in 10 s closed with 4004');
+  assert((await phoneC.waitClosed()) === 4004, 'phone sending more than 200 messages in 10 s closed with 4004');
+
+  // The host gets 4x the phone budget (one encrypted copy per phone).
+  for (let i = 0; i < 300; i++) host.sendTo({ type: 'host-burst', i }, idA);
+  await phoneA.waitFor((m) => m?.type === 'host-burst' && m.i === 299, 5000);
+  assert(host.closeCode === null, 'host may send 300 messages in 10 s');
+
+  const binary = await connect(room, 'phone');
+  binary.send(new Uint8Array([1, 2, 3]));
+  assert((await binary.waitClosed()) === 4005, 'binary frame closed with 4005 (text only)');
 
   console.log('\n[5] Leaving and host replacement');
   const left = await host.waitFor((m) => m?.relay === 'peer-left' && m.role === 'phone');
@@ -192,13 +232,54 @@ async function runTests() {
   await sleep(500);
   assert(!phoneA.has((m) => m?.relay === 'peer-left' && m.role === 'host'), 'phones not told "host left" on replacement');
   assert(phoneA.has((m) => m?.relay === 'peer-joined' && m.role === 'host'), 'phones told the new host joined');
-  host2.send(JSON.stringify({ type: 'from-host2' }));
+  host2.sendTo({ type: 'from-host2' });
   assert((await phoneA.waitFor((m) => m?.type === 'from-host2')) !== null, 'new host -> phone delivered');
 
   host2.close();
   assert((await phoneA.waitFor((m) => m?.relay === 'peer-left' && m.role === 'host')) !== null, 'phones told when the host leaves');
 
   for (const c of [phoneA, phoneB]) c.close();
+
+  console.log('\n[6] End-to-end encryption through the relay');
+  const e2eRoom = newRoom();
+  const marker = 'PLAINTEXT-MARKER-' + crypto.randomBytes(4).toString('hex');
+  const seen: string[] = []; // every frame either side sent or received
+  const hostWs = await connect(e2eRoom, 'host');
+  const phoneWs = await connect(e2eRoom, 'phone');
+  const hostGot: any[] = [];
+  const phoneGot: any[] = [];
+  const e2eHost = new HostE2E({
+    room: e2eRoom,
+    identity: await generateIdentity({ extractable: true }),
+    phones: new MemoryPhoneRegistry(),
+    send: (t: string) => (seen.push(t), hostWs.send(t)),
+    onMessage: (_id: string, obj: any) => hostGot.push(obj),
+  });
+  const e2ePhone = new PhoneE2E({
+    room: e2eRoom,
+    identity: await generateIdentity(),
+    send: (t: string) => (seen.push(t), phoneWs.send(t)),
+    onMessage: (obj: any) => phoneGot.push(obj),
+  });
+  hostWs.onRaw = (t) => (seen.push(t), e2eHost.handleRelay(t));
+  phoneWs.onRaw = (t) => (seen.push(t), e2ePhone.handleRelay(t));
+
+  const secret = await e2eHost.startPairing();
+  assert((await e2ePhone.pair(secret, 'test phone')) === e2eHost.identity.pub, 'phone paired through the relay');
+  await e2ePhone.connect();
+  assert(e2ePhone.ready, 'encrypted session established through the relay');
+  await e2ePhone.send({ type: 'prompt', text: marker });
+  await e2eHost.broadcast({ type: 'message', text: marker + '-reply' });
+  const deadline = Date.now() + 3000;
+  while ((hostGot.length < 1 || phoneGot.length < 1) && Date.now() < deadline) await sleep(20);
+  assert(hostGot[0]?.text === marker, 'laptop decrypted the phone message');
+  assert(phoneGot[0]?.text === marker + '-reply', 'phone decrypted the laptop message');
+  const wire = seen.join('\n');
+  assert(seen.length >= 8, `checked ${seen.length} frames on the wire`);
+  assert(!wire.includes(marker) && !wire.includes(secret) && !wire.includes('prompt'), 'no plaintext, message type or pairing secret on the wire');
+
+  hostWs.close();
+  phoneWs.close();
 }
 
 let relay: ChildProcess | null = null;

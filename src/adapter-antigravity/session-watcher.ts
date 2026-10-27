@@ -34,11 +34,13 @@ export class SessionWatcher extends EventEmitter {
 
   public async start(): Promise<void> {
     this.activeTranscriptPath = this.resolveTranscriptPath();
-    if (!this.activeTranscriptPath) {
+    if (!this.activeTranscriptPath && this.liveMode) {
+      // A window with no conversation yet: show it empty and keep polling until the adapter assigns one.
+      this.lastSnapshot.status = 'idle';
+    } else if (!this.activeTranscriptPath) {
       this.lastSnapshot.status = 'disconnected';
       this.emit('event', { type: 'adapter_error', error: this.config.messages.ideNotFound } as AdapterEvent);
-      // A window with no conversation yet still needs polling once the adapter assigns one.
-      if (!this.liveMode) return;
+      return;
     }
 
     this.isWatching = true;
@@ -80,6 +82,9 @@ export class SessionWatcher extends EventEmitter {
         return explicitPath;
       }
     }
+    // The IDE's list says which conversations belong to this window; a guess here could show
+    // (and send prompts to) another project's chat when this window has none yet.
+    if (this.liveMode) return null;
 
     try {
       const entries = fs.readdirSync(brainDir);

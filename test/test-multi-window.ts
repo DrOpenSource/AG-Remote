@@ -142,6 +142,18 @@ async function run() {
   assert(anyAdapter.watcher.getActiveConversationId() === 'a-new', 'new activity in another chat of this window moves the tab there');
 
   anyAdapter.watcher.stop();
+
+  const empty = new AntigravityAdapter('C:\\proj\\c', { brainDir: brain }, { lsBridge: stub, livePollMs: 60000 });
+  await empty.connect();
+  await empty.disconnect();
+  const anyEmpty = empty as any;
+  await anyEmpty.pollLive();
+  assert(anyEmpty.watcher.getActiveConversationId() === null, 'a window with no chat of its own shows no conversation, not another project\'s');
+  assert((await empty.getSnapshot()).messages.length === 0, 'its tab stays empty');
+  let refused = '';
+  try { await empty.sendPrompt('hi'); } catch (e: any) { refused = e.message; }
+  assert(/no Antigravity chat yet/.test(refused), 'a prompt from its tab is refused instead of reaching another project');
+  anyEmpty.watcher.stop();
   fs.rmSync(brain, { recursive: true, force: true });
 
   console.log('\n[Suite 3] Hand-over: another window takes over the port');

@@ -38,6 +38,7 @@ function recordConversationShape(res: any): void {
 }
 
 const BRIDGE_UNAVAILABLE ='Antigravity live bridge unavailable: is the IDE running? Nothing was sent.';
+const NO_CONVERSATION = 'This window has no Antigravity chat yet. Start one in the IDE\'s Agent panel first. Nothing was sent.';
 
 function toApproval(p: LiveInteraction): Approval {
   const actions: ApprovalOption[] =
@@ -206,7 +207,8 @@ export class AntigravityAdapter implements IdeAdapter {
       throw new Error('Prompt text cannot be empty');
     }
     const cid = this.watcher.getActiveConversationId();
-    if (!this.ls || !cid) throw new Error(BRIDGE_UNAVAILABLE);
+    if (!this.ls) throw new Error(BRIDGE_UNAVAILABLE);
+    if (!cid) throw new Error(NO_CONVERSATION);
     auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), cascadeId: cid });
     await this.ls.sendPrompt(cid, text.trim());
   }

@@ -32,9 +32,11 @@ const CASCADE = '11111111-2222-3333-4444-555555555555';
 interface FakeState {
   steps: any[];
   acceptInteraction: boolean;
+  /** Folder the fake IDE's conversation list assigns to CASCADE. */
+  workspace: string;
   calls: Array<{ method: string; body: any; token: string | undefined }>;
 }
-const state: FakeState = { steps: [], acceptInteraction: true, calls: [] };
+const state: FakeState = { steps: [], acceptInteraction: true, workspace: '', calls: [] };
 
 function waitingStep(cmd = 'echo hello > probe.txt') {
   return {
@@ -73,6 +75,8 @@ const server = http.createServer((req, res) => {
         if (state.steps[i]) state.steps[i].status = 'CORTEX_STEP_STATUS_RUNNING';
       }
       res.end('{}');
+    } else if (method === 'GetAllCascadeTrajectories') {
+      res.end(JSON.stringify({ trajectorySummaries: { [CASCADE]: { summary: 'hi', workspaces: [{ workspaceFolderAbsoluteUri: state.workspace }], lastModifiedTime: new Date().toISOString() } } }));
     } else if (method === 'SendUserCascadeMessage') {
       state.steps.push({ type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE' });
       res.end('{}');
@@ -153,6 +157,7 @@ async function run() {
   fs.writeFileSync(path.join(logs, 'transcript.jsonl'),
     JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>hi</USER_REQUEST>' }) + '\n');
   resetSteps();
+  state.workspace = brain;
   const adapter = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: bridge, livePollMs: 60000 });
   const events: string[] = [];
   adapter.onEvent(e => events.push(e.type));

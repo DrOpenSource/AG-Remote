@@ -25,6 +25,10 @@ const VERSION = 'ag-remote e2e v1';
 export const PAIRING_TTL_MS = 5 * 60 * 1000;
 export const MAX_PAIRING_FAILURES = 5;
 export const MAX_NAME_LENGTH = 64;
+// Larger app messages are split so every sealed frame stays under the relay's 64 KB cap.
+export const MAX_FRAME_PLAINTEXT = 40000;
+const PART_BYTES = 30000; // base64 of this, sealed and base64'd again, is about 54 KB
+const MAX_ASSEMBLED_BYTES = 32 * 1024 * 1024;
 
 export class E2EError extends Error {
   constructor(code) {
@@ -205,6 +209,58 @@ async function deriveChannel({ role, room, staticPriv, ephPriv, peerStatic, peer
   return role === 'phone' ? new Channel(p2h, h2p, 'phone') : new Channel(h2p, p2h, 'host');
 }
 
+/** {app} payloads to seal for one app message: itself, or {part} pieces when it is too big for one frame. */
+function splitApp(obj) {
+  const bytes = encoder.encode(JSON.stringify({ app: obj }));
+  if (bytes.length <= MAX_FRAME_PLAINTEXT) return [{ app: obj }];
+  const mid = toB64u(randomBytes(8));
+  const n = Math.ceil(bytes.length / PART_BYTES);
+  return Array.from({ length: n }, (_, i) => ({
+    part: { mid, i, n, b: toB64u(bytes.subarray(i * PART_BYTES, (i + 1) * PART_BYTES)) },
+  }));
+}
+
+/**
+ * Rebuilds split messages. Parts of one message are sealed in one queued job, so they arrive
+ * consecutively and in order; anything else is dropped.
+ */
+class Assembler {
+  constructor() {
+    this.cur = null;
+  }
+
+  /** Returns the decoded payload once the last part arrives, else undefined. */
+  add(part) {
+    if (!part || typeof part.mid !== 'string' || !Number.isSafeInteger(part.i) || !Number.isSafeInteger(part.n)) return undefined;
+    if (part.i === 0) this.cur = { mid: part.mid, n: part.n, chunks: [], size: 0 };
+    const cur = this.cur;
+    if (!cur || cur.mid !== part.mid || cur.n !== part.n || cur.chunks.length !== part.i) {
+      this.cur = null;
+      return undefined;
+    }
+    const bytes = fromB64u(part.b);
+    cur.size += bytes.length;
+    if (cur.size > MAX_ASSEMBLED_BYTES) {
+      this.cur = null;
+      return undefined;
+    }
+    cur.chunks.push(bytes);
+    if (cur.chunks.length < cur.n) return undefined;
+    this.cur = null;
+    return JSON.parse(decoder.decode(concat(...cur.chunks)));
+  }
+}
+
+/** Feeds one part to an assembler; a malformed part just drops the message. */
+function assemble(assembler, part) {
+  try {
+    return assembler.add(part);
+  } catch {
+    assembler.cur = null;
+    return undefined;
+  }
+}
+
 function parse(text) {
   try {
     const obj = JSON.parse(text);
@@ -350,7 +406,7 @@ export class HostE2E {
       hostEph: eph.pub,
     });
     this.dropPeer(peerId);
-    const peer = { pub: msg.pub, channel, ready: false, sendQ: serial() };
+    const peer = { pub: msg.pub, channel, ready: false, sendQ: serial(), assembler: new Assembler() };
     this.peers.set(peerId, peer);
     await peer.sendQ(async () => {
       const confirm = await channel.seal({ e2e: 'ready' });
@@ -382,6 +438,7 @@ export class HostE2E {
       this.onPhoneReady(peerId, await this.phones.get(peer.pub));
       return;
     }
+    if (inner?.part) inner = assemble(peer.assembler, inner.part);
     if (inner && 'app' in inner) this.onMessage(peerId, inner.app, await this.phones.get(peer.pub));
   }
 
@@ -395,8 +452,10 @@ export class HostE2E {
     if (!peer) return Promise.resolve(false);
     return peer.sendQ(async () => {
       if (this.peers.get(peerId) !== peer) return false;
-      const sealed = await peer.channel.seal({ app: obj });
-      this.sendPlain(peerId, { t: 'enc', ...sealed });
+      for (const payload of splitApp(obj)) {
+        const sealed = await peer.channel.seal(payload);
+        this.sendPlain(peerId, { t: 'enc', ...sealed });
+      }
       return true;
     });
   }
@@ -560,6 +619,7 @@ export class PhoneE2E {
       const confirm = await channel.open(msg.confirm);
       if (confirm?.e2e !== 'ready') throw new E2EError('bad-confirm');
       this.channel = channel;
+      this.assembler = new Assembler();
       await this.sendQ(async () => {
         const sealed = await channel.seal({ e2e: 'ready' });
         this.sendFrame(JSON.stringify({ t: 'enc', ...sealed }));
@@ -580,6 +640,7 @@ export class PhoneE2E {
     } catch {
       return; // A replayed or tampered frame is dropped; the session stays up.
     }
+    if (inner?.part) inner = assemble(this.assembler, inner.part);
     if (inner && 'app' in inner) this.onMessage(inner.app);
   }
 
@@ -587,8 +648,11 @@ export class PhoneE2E {
   send(obj) {
     return this.sendQ(async () => {
       if (!this.ready || !this.channel) throw new E2EError('not-connected');
-      const sealed = await this.channel.seal({ app: obj });
-      this.sendFrame(JSON.stringify({ t: 'enc', ...sealed }));
+      const channel = this.channel;
+      for (const payload of splitApp(obj)) {
+        const sealed = await channel.seal(payload);
+        this.sendFrame(JSON.stringify({ t: 'enc', ...sealed }));
+      }
     });
   }
 }

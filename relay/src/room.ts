@@ -3,7 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 /**
  * One room per paired laptop. Holds one host socket (the extension) and a few phone sockets.
  * Text frames only. Message bodies ("d") are forwarded untouched; they are end-to-end encrypted
- * (src/e2e/e2e.js), so the relay can't read them.
+ * (src/pwa/e2e.js), so the relay can't read them.
  * Uses WebSocket hibernation, so an idle room costs nothing while sockets stay open.
  *
  * Routing:

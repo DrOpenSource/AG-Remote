@@ -21,7 +21,7 @@
   },
   "scripts": {
     "start": "node --experimental-strip-types bin/ag-remote.mjs",
-    "test": "npm run test:ls && npm run test:multi && npm run test:adapter && npm run test:server && npm run test:hub && npm run test:pwa && npm run test:pairing && npm run test:audit && npm run test:env && npm run test:e2e",
+    "test": "npm run test:ls && npm run test:multi && npm run test:adapter && npm run test:server && npm run test:hub && npm run test:pwa && npm run test:pairing && npm run test:audit && npm run test:env && npm run test:e2e && npm run test:relay-host",
     "test:adapter": "node --env-file=test/test.env --experimental-strip-types test/test-adapter.ts",
     "test:server": "node --env-file=test/test.env --experimental-strip-types test/test-server.ts",
     "test:hub": "node --env-file=test/test.env --experimental-strip-types test/test-hub-and-cdp.ts",
@@ -33,7 +33,8 @@
     "package": "npx --yes @vscode/vsce package --no-dependencies",
     "test:ls": "node --env-file=test/test.env --experimental-strip-types test/test-ls-bridge.ts",
     "test:multi": "node --env-file=test/test.env --experimental-strip-types test/test-multi-window.ts",
-    "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts"
+    "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts",
+    "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts"
   },
   "contributes": {
     "commands": [
@@ -45,6 +46,10 @@
       {
         "command": "ag-remote.revokePairings",
         "title": "Antigravity Remote: Revoke All Pairings"
+      },
+      {
+        "command": "ag-remote.managePhones",
+        "title": "Antigravity Remote: Manage Paired Phones"
       },
       {
         "command": "ag-remote.restartServer",
@@ -63,6 +68,26 @@
           "type": "string",
           "default": "0.0.0.0",
           "description": "Host address for the server (default: 0.0.0.0 for local Wi-Fi and Tailscale reachability)."
+        },
+        "agRemote.transport": {
+          "type": "string",
+          "enum": [
+            "both",
+            "wifi",
+            "relay"
+          ],
+          "enumDescriptions": [
+            "Relay for any network, plus direct Wi-Fi/Tailscale with a PIN",
+            "Only direct Wi-Fi/Tailscale with a PIN (nothing goes through the relay)",
+            "Only the relay; the local server accepts this PC only"
+          ],
+          "default": "both",
+          "description": "How your phone reaches this PC. The relay is end-to-end encrypted: it forwards messages it cannot read."
+        },
+        "agRemote.relayUrl": {
+          "type": "string",
+          "default": "https://remote.taqnik.in",
+          "description": "Hosted relay used when transport is \"both\" or \"relay\"."
         }
       }
     }

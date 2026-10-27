@@ -29,14 +29,15 @@ User's phone (any network) ──── HTTPS ────┘
 ## Phases
 
 1. **Relay skeleton:** Worker + Durable Object passing messages between two test clients, deployed to `remote.taqnik.in` via Wrangler (owner logs in and approves DNS). **Done 2026-10-27.**
-2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/e2e/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 41/41, `cd relay; npm test` 37/37 locally and live. **Deployed 2026-10-27.**
-3. **Extension relay transport** + transport setting; direct Wi-Fi unchanged. Includes serving the phone page at `/p/<room>` and the RPC tunnel below.
+2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/pwa/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 41/41, `cd relay; npm test` 37/37 locally and live. **Deployed 2026-10-27.**
+3. **Extension relay transport** + transport setting; direct Wi-Fi unchanged. **Built 2026-10-27** (details in "Phase 3 as built" below).
 4. **Live test** from the owner's phone over mobile data (numbered steps + pass/fail table).
 5. **Public-release prep:** privacy note, limits, push notifications. Scope depends on how public the owner wants to go.
+   - **Known issue (deferred by the owner 2026-10-27):** `GET /pair/view` on the Wi-Fi server is unauthenticated and mints a fresh PIN for anyone on the same network (server binds 0.0.0.0), who could then pair and control the agent. Fix: allow loopback callers only (it is only opened as `localhost` by linked windows). Document it in the README until fixed.
 
 ## Phase 2 design: E2E encryption + pairing (drafted 2026-10-27)
 
-**Constraints:** WebCrypto only (built into Node 24, browsers and Workers), so no new dependencies. One shared module `src/e2e/` runs unchanged in the extension (Node) and the phone page (browser). P-256 ECDH rather than X25519, because P-256 works in every phone browser's WebCrypto.
+**Constraints:** WebCrypto only (built into Node 24, browsers and Workers), so no new dependencies. One shared module `src/pwa/e2e.js` (moved from `src/e2e/` in Phase 3 so the relay can serve it) runs unchanged in the extension (Node) and the phone page (browser). P-256 ECDH rather than X25519, because P-256 works in every phone browser's WebCrypto.
 
 **Keys and state**
 - *Laptop (host):* a long-term ECDH key pair, the room id, and a list of paired phones (public key, name, paired-at). Stored in `dataDir()` beside `session.token`, mode 0600, shared by all IDE windows.
@@ -64,5 +65,17 @@ User's phone (any network) ──── HTTPS ────┘
 **Phase 3 (for context):** the phone page sends its REST calls (`/api/state`, `/api/approve`, …, 9 routes) as encrypted `req`/`res` messages, and WebSocket events as `evt`. The extension answers them with the same handlers the local server uses, so `SessionManager` is untouched.
 
 **Honest caveat:** this is a small custom protocol on standard pieces (ECDH, HKDF, AES-GCM, HMAC), shaped like the Noise "KK" pattern. It should get an outside review before a public paid release (Phase 5).
+
+## Phase 3 as built (2026-10-27)
+
+- **Shared API:** the 9 phone routes moved from `http-server.ts` into `src/server/api.ts` (`handlePhoneApi`); the HTTP server and the relay both call it, so behaviour can't drift.
+- **Extension:** `src/relay-host/relay-store.ts` keeps room id, long-term key and paired phones in `<dataDir>/relay.json` (0600, shared by all windows, so hand-over keeps the room). `relay-host.ts` (`RelayHost`) dials `wss://<relay>/ws/<room>?role=host` with Node's built-in WebSocket (Antigravity = Electron 41 / Node 24), answers `{k:'req'}` with `{k:'res'}`, pushes adapter events as `{k:'evt'}`, reconnects with backoff, and stops (does not fight) when the relay says another window is host (4001). Hub routes are never reachable over the relay.
+- **Settings:** `agRemote.transport` = `both` (default) | `wifi` | `relay`; relay-only binds the local server to 127.0.0.1. `agRemote.relayUrl` (default https://remote.taqnik.in).
+- **IDE:** pairing panel shows the relay QR (+ Wi-Fi PIN when on); linked windows get it from the host via loopback-only `POST /api/hub/relay-pair`. "Revoke All Pairings" also unpairs relay phones and moves to a new room; new "Manage Paired Phones" unpairs one. Status bar tooltip shows relay state.
+- **Phone:** `src/pwa/relay-link.js` (pairs from `#secret`, strips it from the URL, keeps a non-extractable key in IndexedDB, reconnects, re-handshakes). `app.js` routes every call through `api()` (fetch on Wi-Fi, encrypted request on relay). Relay mode = `/p/<room>` or a saved room on https (Tailscale https without a saved room stays Wi-Fi mode).
+- **Large messages:** `e2e.js` splits app messages over 40 KB into encrypted parts (each frame < 64 KB) and reassembles them, so long conversations don't hit the relay cap.
+- **Worker:** serves `src/pwa` as static assets (`[assets]`, all requests through the Worker), `/p/<room>` returns the app, strict CSP + no-referrer on pages.
+- **Tests:** `npm run test:relay-host` (28, in-memory relay + real SessionManager), `test:e2e` (45, incl. 519 KB message), relay suite 49 (incl. page routes). One-off headless-Edge checks (not in the repo): relay flow 13/13 (pair, secret stripped, live event, reload from IndexedDB, IDE offline/online, spent QR message, revoke) and Wi-Fi mode 5/5.
+- **Not verified locally:** opening "/" from a home-screen icon finds the saved room only on https; check on the live relay in Phase 4.
 
 Rejected for this goal: a per-user Cloudflare Tunnel or Tailscale (each user would have to set up their own; fine for personal use, see docs/TAILSCALE_SETUP.md).

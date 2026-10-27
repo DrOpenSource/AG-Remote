@@ -38,8 +38,42 @@
   let isReconnecting = false;
   let reconnectAttempts = 0;
 
+  // Relay mode: opened from a relay QR (/p/<room>#<secret>), or a phone that paired that way before.
+  // Everything else (local Wi-Fi, Tailscale) talks to the PC's own server with the session token.
+  const RELAY_ROOM_KEY = 'ag_remote_relay_room';
+  const relayRoom = (() => {
+    const m = window.location.pathname.match(/^\/p\/([A-Za-z0-9_-]{22})\/?$/);
+    if (m) return m[1];
+    if (window.location.protocol !== 'https:') return null;
+    try { return localStorage.getItem(RELAY_ROOM_KEY); } catch (_) { return null; }
+  })();
+  const relayMode = !!relayRoom;
+  let relay = null; // RelayLink (relay-link.js) in relay mode
+
+  /** Paired with a PC (it may still be unreachable right now). */
+  function linked() {
+    return relayMode ? !!relay : !!token;
+  }
+
+  /** One API call over whichever transport this page uses. Resolves { ok, status, data }. */
+  async function api(method, path, body) {
+    if (relayMode) {
+      if (!relay) throw new Error('not-connected');
+      return relay.request(method, path, body);
+    }
+    const headers = { 'Authorization': `Bearer ${token}` };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+
   // 1. Token Initialization & Pairing Exchange
   async function initAuth() {
+    if (relayMode) {
+      startRelay();
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const pairingCode = params.get('t');
     const directToken = params.get('token');
@@ -79,6 +113,67 @@
   async function startApp() {
     await resyncState();
     connectWebSocket();
+  }
+
+  const pairHint = document.getElementById('pairHint');
+  const pinLabel = document.getElementById('pinLabel');
+  const RELAY_PAIR_ERRORS = {
+    'bad-secret': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
+    'no-pairing': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
+    'expired': 'This QR code has expired (they last 5 minutes). Show a new one on your PC and scan it.',
+    'timeout': 'Your PC did not answer. Check that Antigravity is open, then scan a new QR code.'
+  };
+
+  async function startRelay() {
+    try { localStorage.setItem(RELAY_ROOM_KEY, relayRoom); } catch (_) {}
+    const secret = window.location.hash.length > 1 ? window.location.hash.slice(1) : null;
+    // Keep the one-time secret out of history and bookmarks.
+    window.history.replaceState(null, document.title, `/p/${relayRoom}`);
+    updateStatus('disconnected', 'Connecting...');
+    const { RelayLink } = await import('/relay-link.js');
+    relay = new RelayLink({
+      room: relayRoom,
+      secret,
+      onEvent: handleAdapterEvent,
+      onState: handleRelayState,
+      onPairError: (code) => showRelayPairing(RELAY_PAIR_ERRORS[code] || 'Pairing failed. Show a new QR code on your PC and scan it.')
+    });
+    relay.start();
+  }
+
+  function handleRelayState(state) {
+    if (state === 'ready') {
+      pairingModal.classList.add('hidden');
+      resyncState();
+      return;
+    }
+    if (state === 'unpaired') {
+      updateStatus('disconnected', 'Not paired');
+      showRelayPairing();
+      return;
+    }
+    const labels = {
+      'connecting': 'Connecting...',
+      'pairing': 'Pairing...',
+      'waiting-host': 'PC offline',
+      'offline': 'Offline',
+      'room-full': 'Too many phones'
+    };
+    updateStatus('disconnected', labels[state] || 'Offline');
+    if (state === 'waiting-host') sessionLabel.textContent = 'Open Antigravity on your PC';
+    if (state === 'room-full') showToast('Your PC already has 4 phones connected. Close AG-Remote on another phone and reload.');
+  }
+
+  /** Relay pairing happens only by scanning a QR code, so the dialog explains that instead of asking for a PIN. */
+  function showRelayPairing(error) {
+    pairHint.textContent = 'Scan the QR code from AG-Remote on your PC (click AG-Remote in the IDE status bar). It works on any network.';
+    pinLabel.classList.add('hidden');
+    tokenInput.classList.add('hidden');
+    btnSaveToken.classList.add('hidden');
+    btnCancelPair.classList.toggle('hidden', !(relay && relay.isReady()));
+    if (error) showPairError(error);
+    else pairError.classList.add('hidden');
+    pairingModal.classList.remove('hidden');
   }
 
   // Tabs: one per open IDE window, each with its own conversation, status and approval.
@@ -121,12 +216,10 @@
   }
 
   async function fetchTabState(id) {
-    const res = await fetch(`/api/state${windowQuery(id)}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    const res = await api('GET', `/api/state${windowQuery(id)}`);
     if (res.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true });
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    const snap = await res.json();
+    const snap = res.data;
     const t = tabFor(id);
     t.status = snap.status;
     t.messages = Array.isArray(snap.messages) ? snap.messages : [];
@@ -134,16 +227,14 @@
   }
 
   async function resyncState() {
-    if (!token) return;
+    if (!linked() || (relayMode && !relay.isReady())) return;
     try {
       let windows = [];
       let selectedId = null;
-      const winRes = await fetch('/api/windows', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const winRes = await api('GET', '/api/windows');
       if (winRes.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true });
       if (winRes.ok) {
-        const winData = await winRes.json();
+        const winData = winRes.data;
         windows = winData.windows || [];
         selectedId = winData.selectedId;
       }
@@ -158,7 +249,7 @@
         pairingModal.classList.remove('hidden');
         return;
       }
-      updateStatus('disconnected', 'Disconnected');
+      if (!relayMode || relay.isReady()) updateStatus('disconnected', 'Disconnected');
     }
   }
 
@@ -201,26 +292,18 @@
     hideToast();
     renderActiveTab();
     // Keeps older clients and the no-windowId default in step with what this phone shows.
-    if (id) {
-      fetch('/api/windows/select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ windowId: id })
-      }).catch(() => {});
-    }
+    if (id) api('POST', '/api/windows/select', { windowId: id }).catch(() => {});
   }
 
   async function updateActiveSessionLabel() {
-    if (!token) return;
+    if (!linked()) return;
     const id = activeTabId;
     const t = tabFor(id);
     sessionLabel.textContent = t.title || t.name;
     try {
-      const res = await fetch(`/api/sessions${windowQuery(id)}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await api('GET', `/api/sessions${windowQuery(id)}`);
       if (!res.ok || id !== activeTabId) return;
-      const data = await res.json();
+      const data = res.data;
       const current = data.sessions?.find(s => s.isCurrent);
       t.title = current ? current.title : '';
       sessionLabel.textContent = tabs.size > 1 ? (t.title || t.name) : (t.title ? `${t.name} · ${t.title}` : t.name);
@@ -230,6 +313,10 @@
 
   // 3. WebSocket Connection & Event Handler
   function connectWebSocket() {
+    if (relayMode) {
+      if (relay) relay.ensureConnected();
+      return;
+    }
     if (!token || (ws && ws.readyState === WebSocket.OPEN)) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -551,7 +638,7 @@
   }
 
   async function submitApprovalResponse(responseText) {
-    if (!currentApproval || !token) return;
+    if (!currentApproval || !linked()) return;
     const approvalId = currentApproval.id;
     const tabId = activeTabId;
     hideApproval();
@@ -560,19 +647,8 @@
     addLocalMessage(responseText, tabId);
 
     try {
-      const res = await fetch('/api/approve', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(withWindow({ id: approvalId, response: responseText }, tabId))
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to submit response');
-      }
+      const res = await api('POST', '/api/approve', withWindow({ id: approvalId, response: responseText }, tabId));
+      if (!res.ok) showToast(res.data.error || 'Failed to submit response');
     } catch (err) {
       showToast('Network error submitting response.');
     }
@@ -612,7 +688,7 @@
 
   // 5. User Action Handlers
   async function sendPrompt(text) {
-    if (!text.trim() || !token) return;
+    if (!text.trim() || !linked()) return;
     const tabId = activeTabId;
 
     // Optimistic UI append
@@ -622,19 +698,8 @@
     btnSend.disabled = true;
 
     try {
-      const res = await fetch('/api/prompt', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(withWindow({ text: text.trim() }, tabId))
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to send prompt');
-      }
+      const res = await api('POST', '/api/prompt', withWindow({ text: text.trim() }, tabId));
+      if (!res.ok) showToast(res.data.error || 'Failed to send prompt');
     } catch (err) {
       showToast('Network error sending prompt.');
     }
@@ -647,19 +712,12 @@
 
   // Keeps the card visible until the IDE confirms; shows the real error otherwise.
   async function sendApprovalDecision(endpoint, payload, failMsg) {
-    if (!currentApproval || !token) return;
+    if (!currentApproval || !linked()) return;
     const approvalId = currentApproval.id;
     const tabId = activeTabId;
     setApprovalBusy(true);
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(withWindow({ id: approvalId, ...payload }, tabId))
-      });
+      const res = await api('POST', endpoint, withWindow({ id: approvalId, ...payload }, tabId));
       if (res.ok) {
         const t = tabFor(tabId);
         if (t.approval && t.approval.id === approvalId) t.approval = null;
@@ -668,8 +726,7 @@
         if (navigator.vibrate) navigator.vibrate(20);
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      showToast(data.error || failMsg);
+      showToast(res.data.error || failMsg);
     } catch (err) {
       showToast('Network error: nothing was sent to the IDE.');
     }
@@ -686,19 +743,11 @@
   }
 
   async function stopCurrent() {
-    if (!token) return;
+    if (!linked()) return;
     try {
-      const res = await fetch('/api/stop', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(withWindow({}))
-      });
+      const res = await api('POST', '/api/stop', withWindow({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        showToast(data.error || 'Failed to stop the agent.');
+        showToast(res.data.error || 'Failed to stop the agent.');
         return;
       }
       showToast('Stop sent to the IDE.');
@@ -729,6 +778,10 @@
   const btnRePair = document.getElementById('btnRePair');
   if (btnRePair) {
     btnRePair.addEventListener('click', () => {
+      if (relayMode) {
+        showRelayPairing();
+        return;
+      }
       pairError.classList.add('hidden');
       btnCancelPair.classList.toggle('hidden', !token);
       pairingModal.classList.remove('hidden');
@@ -837,7 +890,7 @@
   }
 
   async function openSessionsModal() {
-    if (!token) return;
+    if (!linked()) return;
     const modal = document.getElementById('sessionsModal');
     const list = document.getElementById('sessionsList');
     if (!modal || !list) return;
@@ -850,22 +903,17 @@
       let windows = [];
       let selectedWinId = null;
       try {
-        const winRes = await fetch('/api/windows', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const winRes = await api('GET', '/api/windows');
         if (winRes.ok) {
-          const winData = await winRes.json();
-          windows = winData.windows || [];
-          selectedWinId = winData.selectedId;
+          windows = winRes.data.windows || [];
+          selectedWinId = winRes.data.selectedId;
         }
       } catch (_) {}
 
       // 2. Fetch sessions
       const tabId = activeTabId;
-      const res = await fetch(`/api/sessions${windowQuery(tabId)}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = res.ok ? await res.json() : { sessions: [] };
+      const res = await api('GET', `/api/sessions${windowQuery(tabId)}`);
+      const data = res.ok ? res.data : { sessions: [] };
       list.innerHTML = '';
 
       // If active windows are registered, render them at the top
@@ -930,14 +978,7 @@
         item.addEventListener('click', async () => {
           try {
             item.classList.add('busy');
-            const switchRes = await fetch('/api/sessions/select', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify(withWindow({ id: s.id }, tabId))
-            });
+            const switchRes = await api('POST', '/api/sessions/select', withWindow({ id: s.id }, tabId));
             if (switchRes.ok) {
               modal.classList.add('hidden');
               await fetchTabState(tabId).catch(() => {});
@@ -970,10 +1011,16 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       resyncState();
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (relayMode || !ws || ws.readyState !== WebSocket.OPEN) {
         connectWebSocket();
       }
     }
+  });
+
+  // A fresh relay QR opened while this page is already showing the room only changes the #fragment,
+  // which doesn't reload the page. Start over so the new secret is used.
+  window.addEventListener('hashchange', () => {
+    if (relayMode && window.location.hash.length > 1) window.location.reload();
   });
 
   window.addEventListener('online', () => {

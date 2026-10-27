@@ -25,7 +25,8 @@
 - **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `remote.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
 - Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes. Subdomain confirmed: `remote.taqnik.in`.
 - **Phase 1 done (2026-10-27):** `relay/` (Worker + `Room` DO) deployed to `https://remote.taqnik.in` on the Workers Free plan (Wrangler logged in as the owner's account). `cd relay; npm test` = 26/26 locally and with `RELAY_URL=https://remote.taqnik.in`. Protocol is in the header comment of `relay/src/room.ts`.
-- **Phase 2 built (2026-10-27):** E2E module `src/e2e/e2e.js` + relay addressing (`{"from"}` / `{"to"}`). Design and deviations: docs/relay_plan.md "Phase 2 design". Tests: `npm run test:e2e` (in-memory relay, attacker cases) and `cd relay; npm test` section [6] (real relay). Relay redeployed and 37/37 live (2026-10-27). Next: Phase 3 (extension transport + phone page at `/p/<room>`).
+- **Phase 2 built (2026-10-27):** E2E module `src/pwa/e2e.js` + relay addressing (`{"from"}` / `{"to"}`). Design and deviations: docs/relay_plan.md "Phase 2 design". Tests: `npm run test:e2e` (in-memory relay, attacker cases) and `cd relay; npm test` section [6] (real relay). Relay redeployed and 37/37 live (2026-10-27). 
+- **Phase 3 built (2026-10-27):** extension relay transport, phone app relay mode, Worker serves the app at `/p/<room>`. See docs/relay_plan.md "Phase 3 as built". Next: deploy relay (owner OK), install the new VSIX, then Phase 4 live test on mobile data.
 - This is the paid-release track; keep it separate from personal-tool fixes.
 
 ## 4. Working agreements and gotchas

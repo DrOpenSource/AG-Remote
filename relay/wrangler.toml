@@ -6,6 +6,13 @@ compatibility_date = "2026-10-01"
 workers_dev = false
 routes = [{ pattern = "remote.taqnik.in", custom_domain = true }]
 
+# The phone app (same files the local Wi-Fi server serves). Every request goes through the Worker
+# so it can add security headers and serve the app at /p/<room>.
+[assets]
+directory = "../src/pwa"
+binding = "ASSETS"
+run_worker_first = true
+
 [[durable_objects.bindings]]
 name = "ROOM"
 class_name = "Room"

@@ -6,11 +6,15 @@ import { AntigravityAdapter } from '../adapter-antigravity/index.ts';
 import { LsBridge } from '../adapter-antigravity/ls-bridge.ts';
 import { SessionManager } from '../core/session-manager.ts';
 import { RemoteServer } from '../server/index.ts';
-import { PairingManager } from '../pairing/manager.ts';
+import { PairingManager, type PairingInfo } from '../pairing/manager.ts';
+import { QRCode } from '../pairing/qr.ts';
+import { RelayHost, type RelayStatus } from '../relay-host/relay-host.ts';
+import { RelayStore } from '../relay-host/relay-store.ts';
 
 let server: RemoteServer | null = null;
 let sessionManager: SessionManager | null = null;
 let pairingManager: PairingManager | null = null;
+let relayHost: RelayHost | null = null;
 let statusBarItem: vscodeTypes.StatusBarItem | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let activeWindowId: string | null = null;
@@ -38,7 +42,12 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
 
   const config = vscode.workspace.getConfiguration('agRemote');
   const port = config.get<number>('port', 49222);
-  const host = config.get<string>('host') || '0.0.0.0';
+  const transport = config.get<string>('transport', 'both');
+  const relayOn = transport === 'both' || transport === 'relay';
+  const wifiOn = transport !== 'relay';
+  const relayUrl = config.get<string>('relayUrl') || 'https://remote.taqnik.in';
+  // Relay-only still needs the local port for window coordination, but nothing off this PC may reach it.
+  const host = wifiOn ? (config.get<string>('host') || '0.0.0.0') : '127.0.0.1';
   hubPort = port;
   const pwaDir = path.join(context.extensionPath, 'src', 'pwa');
   const identity = () => ({
@@ -54,26 +63,74 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
   statusBarItem.command = 'ag-remote.showPairingQr';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+  const relayLabels: Record<RelayStatus, string> = {
+    online: 'relay on',
+    connecting: 'relay connecting',
+    offline: 'relay offline',
+    replaced: 'relay moved to another window',
+    stopped: 'relay off'
+  };
   const showStatus = () => {
     if (!statusBarItem) return;
-    statusBarItem.text = isHost ? `$(radio-tower) AG-Remote :${port}` : `$(radio-tower) AG-Remote [${workspaceName}]`;
+    const relayStatus = relayHost?.getStatus();
+    const icon = relayStatus === 'offline' ? '$(cloud-offline)' : '$(radio-tower)';
+    statusBarItem.text = isHost ? `${icon} AG-Remote :${port}` : `$(radio-tower) AG-Remote [${workspaceName}]`;
     statusBarItem.tooltip = isHost
-      ? 'Antigravity Phone Remote Control (Click to Pair)'
+      ? `Antigravity Phone Remote Control (Click to Pair)${relayStatus ? `\nRelay: ${relayLabels[relayStatus]} (${relayUrl})` : ''}`
       : `Antigravity Phone Remote Control (Linked to Hub on :${port})`;
   };
 
+  const requireHost = (): boolean => {
+    if (isHost) return true;
+    vscode.window.showInformationMessage('AG-Remote: Run this in the window that hosts the server (status bar shows the port).');
+    return false;
+  };
+
   context.subscriptions.push(
-    vscode.commands.registerCommand('ag-remote.showPairingQr', () => {
-      if (isHost && pairingManager) showPairingPanel(vscode, pairingManager, port);
-      else vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
-    }),
-    vscode.commands.registerCommand('ag-remote.revokePairings', () => {
-      if (!isHost || !pairingManager) {
-        vscode.window.showInformationMessage('AG-Remote: Run this in the window that hosts the server (status bar shows the port).');
+    vscode.commands.registerCommand('ag-remote.showPairingQr', async () => {
+      if (isHost && pairingManager) {
+        const relayPairUrl = relayHost ? await relayHost.createPairingUrl() : undefined;
+        showPairingPanel(vscode, { relayPairUrl, wifi: wifiOn ? pairingManager.createPairingSession() : undefined });
         return;
       }
+      if (relayOn) {
+        // The relay connection lives in the host window; ask it (over loopback) for a QR.
+        const res = await postHubJson(port, '/api/hub/relay-pair', {});
+        if (res?.url) {
+          showPairingPanel(vscode, { relayPairUrl: res.url });
+          return;
+        }
+      }
+      vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
+    }),
+    vscode.commands.registerCommand('ag-remote.revokePairings', async () => {
+      if (!requireHost() || !pairingManager) return;
       pairingManager.revokeAllPairings();
-      vscode.window.showInformationMessage('AG-Remote: All active phone pairings revoked. Generated new secret token.');
+      if (relayHost) await relayHost.revokeAll();
+      vscode.window.showInformationMessage(relayHost
+        ? 'AG-Remote: All phones unpaired (Wi-Fi and relay). Old QR codes no longer work; pair again to reconnect.'
+        : 'AG-Remote: All active phone pairings revoked. Generated new secret token.');
+    }),
+    vscode.commands.registerCommand('ag-remote.managePhones', async () => {
+      if (!requireHost()) return;
+      if (!relayHost) {
+        vscode.window.showInformationMessage('AG-Remote: Wi-Fi pairings share one token; use "Revoke All Pairings" to remove them.');
+        return;
+      }
+      const phones = relayHost.pairedPhones();
+      if (phones.length === 0) {
+        vscode.window.showInformationMessage('AG-Remote: No phones are paired through the relay.');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        phones.map((p) => ({ label: p.name || 'Phone', description: `paired ${new Date(p.pairedAt).toLocaleString()}`, pub: p.pub })),
+        { placeHolder: 'Select a phone to unpair' }
+      );
+      if (!pick) return;
+      const confirm = await vscode.window.showWarningMessage(`Unpair "${pick.label}"? It will need a new QR code to connect again.`, { modal: true }, 'Unpair');
+      if (confirm !== 'Unpair') return;
+      await relayHost.revoke(pick.pub);
+      vscode.window.showInformationMessage(`AG-Remote: "${pick.label}" unpaired.`);
     }),
     vscode.commands.registerCommand('ag-remote.restartServer', async () => {
       if (server) {
@@ -114,8 +171,30 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     pairingManager = new PairingManager(sm.auth, port);
     isHost = true;
     sm.registry.register(identity());
+    if (relayOn) await startRelay(sm, srv);
     showStatus();
     return true;
+  };
+
+  const startRelay = async (sm: SessionManager, srv: RemoteServer) => {
+    if (typeof globalThis.WebSocket !== 'function') {
+      vscode.window.showWarningMessage('AG-Remote: This IDE build has no WebSocket client, so the relay is off. Wi-Fi pairing still works.');
+      return;
+    }
+    try {
+      const rh = new RelayHost({
+        relayUrl,
+        store: await RelayStore.load(),
+        sessionManager: sm,
+        onStatus: () => showStatus(),
+        onPaired: (phone) => vscode.window.showInformationMessage(`AG-Remote: Paired "${phone.name || 'phone'}" through the relay.`)
+      });
+      rh.start();
+      relayHost = rh;
+      srv.setRelayPairing(() => rh.createPairingUrl());
+    } catch (err: any) {
+      vscode.window.showWarningMessage(`AG-Remote: Relay could not start (${err?.message || err}). Wi-Fi pairing still works.`);
+    }
   };
 
   // A linked window checks in every 4s. If the host is gone (closed or reloaded) it tries to take over;
@@ -189,6 +268,10 @@ export async function deactivate(): Promise<void> {
   if (activeWindowId) {
     postHubJson(hubPort, '/api/hub/unregister', { windowId: activeWindowId });
   }
+  if (relayHost) {
+    relayHost.stop();
+    relayHost = null;
+  }
   if (server) {
     await server.stop();
     server = null;
@@ -202,15 +285,26 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-function showPairingPanel(vscode: typeof vscodeTypes, pairingMgr: PairingManager, port: number) {
+/**
+ * Relay QR (any network) when the relay is on, plus the Wi-Fi PIN/QR when direct mode is on.
+ * The relay QR's #fragment is a one-time secret, so it is drawn but not printed as text.
+ */
+function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; wifi?: PairingInfo }) {
   const panel = vscode.window.createWebviewPanel(
     'agRemotePairing',
     'Pair Phone - AG-Remote',
     vscode.ViewColumn.Beside,
-    { enableScripts: true }
+    { enableScripts: false }
   );
 
-  const pairing = pairingMgr.createPairingSession();
+  const { relayPairUrl, wifi } = opts;
+  if (relayPairUrl) {
+    const relayQr = QRCode.toSvg(QRCode.generateMatrix(relayPairUrl));
+    panel.webview.html = relayPanelHtml(relayQr, wifi);
+    return;
+  }
+  if (!wifi) return;
+  const pairing = wifi;
 
   panel.webview.html = `<!DOCTYPE html>
 <html lang="en">
@@ -277,6 +371,68 @@ function showPairingPanel(vscode: typeof vscodeTypes, pairingMgr: PairingManager
   <p style="font-size: 11px; color: #64748b;">
     Connected via local Wi-Fi or Tailscale. No data leaves your machine.
   </p>
+</body>
+</html>`;
+}
+
+function relayPanelHtml(relayQrSvg: string, wifi?: PairingInfo): string {
+  const pin = wifi ? `${wifi.pairingCode.slice(0, 3)} ${wifi.pairingCode.slice(3)}` : '';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 24px;
+      background: #0b0f19;
+      color: #f8fafc;
+      text-align: center;
+      line-height: 1.5;
+    }
+    h2 { font-size: 20px; margin-bottom: 6px; }
+    p { color: #94a3b8; font-size: 13px; max-width: 420px; margin: 0 auto 16px auto; }
+    .qr-box {
+      display: inline-block;
+      padding: 16px;
+      background: #131b2e;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      margin-bottom: 16px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(245, 158, 11, 0.15);
+      color: #f59e0b;
+      margin-bottom: 16px;
+    }
+    .wifi {
+      border-top: 1px solid #334155;
+      margin: 8px auto 0 auto;
+      padding-top: 16px;
+      max-width: 420px;
+    }
+    .pin { font-family: monospace; font-size: 22px; letter-spacing: 4px; color: #38bdf8; font-weight: 800; }
+  </style>
+</head>
+<body>
+  <h2>Pair Your Phone</h2>
+  <p>Scan this QR code with your phone camera. It works on any network: mobile data, office or home Wi-Fi.</p>
+  <div class="badge">⏱️ One-time code: expires in 5 minutes</div>
+  <div class="qr-box">
+    ${relayQrSvg}
+  </div>
+  <p style="font-size: 11px; color: #64748b;">
+    End-to-end encrypted. The relay only forwards scrambled messages; it can't read your code or prompts, or approve anything.
+  </p>
+  ${wifi ? `<div class="wifi">
+    <p>Phone on the same Wi-Fi as this PC? You can also open <strong>${wifi.url.replace(/\/pair\?t=.*$/, '')}</strong> and type this PIN:</p>
+    <div class="pin">${pin}</div>
+  </div>` : ''}
 </body>
 </html>`;
 }

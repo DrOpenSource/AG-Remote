@@ -3,7 +3,7 @@
 // Against a deployed relay: RELAY_URL=https://remote.taqnik.in npm test
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import crypto from 'crypto';
-import { HostE2E, PhoneE2E, MemoryPhoneRegistry, generateIdentity } from '../../src/e2e/e2e.js';
+import { HostE2E, PhoneE2E, MemoryPhoneRegistry, generateIdentity } from '../../src/pwa/e2e.js';
 
 const LOCAL_URL = 'http://127.0.0.1:8787';
 const BASE = process.env.RELAY_URL || LOCAL_URL;
@@ -144,6 +144,23 @@ async function runTests() {
   assert((await fetch(`${BASE}/ws/short?role=host`)).status === 400, 'guessable room id rejected (400)');
   assert((await fetch(`${BASE}/ws/${newRoom()}?role=admin`)).status === 400, 'unknown role rejected (400)');
   assert((await fetch(`${BASE}/ws/${newRoom()}?role=host`)).status === 426, 'plain GET on /ws needs an upgrade (426)');
+
+  console.log('\n[1b] Phone app');
+  const pageRes = await fetch(`${BASE}/p/${newRoom()}`);
+  const pageHtml = await pageRes.text();
+  assert(pageRes.status === 200 && pageHtml.includes('/app.js'), '/p/<room> serves the phone app');
+  const csp = pageRes.headers.get('content-security-policy') || '';
+  assert(csp.includes("default-src 'self'") && csp.includes("frame-ancestors 'none'"), 'page has a strict Content-Security-Policy');
+  assert(pageRes.headers.get('referrer-policy') === 'no-referrer', 'page sends no referrer');
+  assert((await fetch(`${BASE}/p/short`)).status === 404, '/p/ with a malformed room is 404');
+  for (const file of ['/app.js', '/e2e.js', '/relay-link.js', '/app.css', '/sw.js', '/manifest.json']) {
+    const r = await fetch(`${BASE}${file}`);
+    await r.arrayBuffer();
+    assert(r.status === 200, `${file} served`);
+  }
+  const e2eJs = await fetch(`${BASE}/e2e.js`);
+  assert(/javascript/.test(e2eJs.headers.get('content-type') || '') && (await e2eJs.text()).includes('class PhoneE2E'), 'e2e.js served as JavaScript (the module the phone imports)');
+  assert((await fetch(`${BASE}/api/state`)).status === 404, 'local-server API paths do not exist on the relay');
 
   console.log('\n[2] Join and presence');
   const room = newRoom();

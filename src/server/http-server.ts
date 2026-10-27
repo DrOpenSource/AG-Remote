@@ -4,12 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { SessionManager } from '../core/session-manager.ts';
 import { WebSocketServer } from './websocket.ts';
+import { handlePhoneApi } from './api.ts';
 import type { AdapterEvent } from '../core/types.ts';
-
-/** The IDE window a phone request targets; undefined means the selected window. */
-function windowIdOf(body: any): string | undefined {
-  return body && typeof body.windowId === 'string' && body.windowId ? body.windowId : undefined;
-}
 
 export interface ServerOptions {
   port?: number;
@@ -103,6 +99,13 @@ export class RemoteServer {
     return new Promise((resolve) => {
       this.server.close(() => resolve());
     });
+  }
+
+  private relayPairing: (() => Promise<string | null>) | null = null;
+
+  /** Set by the host window when the relay is on, so linked windows can show its pairing QR. */
+  public setRelayPairing(fn: (() => Promise<string | null>) | null): void {
+    this.relayPairing = fn;
   }
 
   public getPort(): number {
@@ -294,6 +297,14 @@ export class RemoteServer {
           return;
         }
 
+        // Relay QR for a linked IDE window. It carries a pairing secret, so this PC only, never a token holder.
+        if (req.method === 'POST' && url.pathname === '/api/hub/relay-pair') {
+          const pairingUrl = isLoopback && this.relayPairing ? await this.relayPairing() : null;
+          res.writeHead(pairingUrl ? 200 : 404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(pairingUrl ? { url: pairingUrl } : { error: 'Relay is not enabled' }));
+          return;
+        }
+
         if (req.method === 'POST' && url.pathname === '/api/hub/register') {
           const body = await this.readJsonBody(req);
           if (!body || !body.windowId || !body.workspacePath) {
@@ -346,144 +357,15 @@ export class RemoteServer {
           return;
         }
 
-        // GET /api/windows (List active, live Antigravity windows)
-        if (req.method === 'GET' && url.pathname === '/api/windows') {
-          const windows = this.sessionManager.listWindows();
-          const selected = this.sessionManager.registry.getSelected();
-          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-          res.end(JSON.stringify({ windows, selectedId: selected?.windowId || null }));
-          return;
-        }
-
-        // POST /api/windows/select (Switch active target window from phone)
-        if (req.method === 'POST' && url.pathname === '/api/windows/select') {
-          const body = await this.readJsonBody(req);
-          if (!body || typeof body.windowId !== 'string') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Body must contain "windowId" string' }));
-            return;
-          }
-          const win = this.sessionManager.selectWindow(body.windowId);
-          if (win) {
-            const snap = await this.sessionManager.getSnapshot();
-            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-            res.end(JSON.stringify({ status: 'selected', window: win, snapshot: snap }));
-          } else {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Window not found' }));
-          }
-          return;
-        }
-
-        // GET /api/state
-        if (req.method === 'GET' && url.pathname === '/api/state') {
-          const snapshot = await this.sessionManager.getSnapshot(url.searchParams.get('windowId') || undefined);
-          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-          res.end(JSON.stringify(snapshot));
-          return;
-        }
-
-        // GET /api/sessions (Discover active Antigravity conversations)
-        if (req.method === 'GET' && url.pathname === '/api/sessions') {
-          const sessions = await this.sessionManager.listSessions(url.searchParams.get('windowId') || undefined);
-          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-          res.end(JSON.stringify({ sessions }));
-          return;
-        }
-
-        // POST /api/sessions/select (Switch active target session from phone)
-        if (req.method === 'POST' && url.pathname === '/api/sessions/select') {
-          const body = await this.readJsonBody(req);
-          if (!body || typeof body.id !== 'string') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Body must contain "id" string' }));
-            return;
-          }
-          const success = await this.sessionManager.setActiveSession(body.id, windowIdOf(body));
-          if (success) {
-            const snap = await this.sessionManager.getSnapshot(windowIdOf(body));
-            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-            res.end(JSON.stringify({ status: 'switched', snapshot: snap }));
-          } else {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Session not found or cannot be activated' }));
-          }
-          return;
-        }
-
-        // POST /api/prompt
-        if (req.method === 'POST' && url.pathname === '/api/prompt') {
-          const body = await this.readJsonBody(req);
-          if (!body || typeof body.text !== 'string' || body.text.trim().length === 0) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Body must contain non-empty "text" field' }));
-            return;
-          }
-          await this.sessionManager.sendPrompt(body.text, windowIdOf(body));
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'sent' }));
-          return;
-        }
-
-        // POST /api/approve
-        if (req.method === 'POST' && url.pathname === '/api/approve') {
-          const body = await this.readJsonBody(req);
-          if (!body || typeof body.id !== 'string') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Body must contain "id" string' }));
-            return;
-          }
-          try {
-            const responseText = typeof body.response === 'string' ? body.response : (body.response ? JSON.stringify(body.response) : undefined);
-            const option = ['allow_once', 'allow_conversation', 'always_allow'].includes(body.option) ? body.option : undefined;
-            await this.sessionManager.approve(body.id, responseText, option, windowIdOf(body));
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'approved' }));
-          } catch (err: any) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message }));
-          }
-          return;
-        }
-
-
-        // POST /api/deny
-        if (req.method === 'POST' && url.pathname === '/api/deny') {
-          const body = await this.readJsonBody(req);
-          if (!body || typeof body.id !== 'string') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Body must contain "id" string' }));
-            return;
-          }
-          try {
-            const reasonText = typeof body.reason === 'string' ? body.reason : undefined;
-            await this.sessionManager.deny(body.id, reasonText, windowIdOf(body));
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'denied' }));
-          } catch (err: any) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message }));
-          }
-          return;
-        }
-
-        // POST /api/stop
-        if (req.method === 'POST' && url.pathname === '/api/stop') {
-          const body = await this.readJsonBody(req).catch(() => ({}));
-          try {
-            await this.sessionManager.stopGeneration(windowIdOf(body));
-          } catch (err: any) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message }));
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'stopped' }));
-          return;
-        }
-
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not Found' }));
+        // Bad JSON is a 500 (via the catch below), except for stop, which needs no body.
+        const body = req.method === 'POST'
+          ? await this.readJsonBody(req).catch((err) => { if (url.pathname === '/api/stop') return {}; throw err; })
+          : undefined;
+        const result = await handlePhoneApi(this.sessionManager, req.method || 'GET', url.pathname, url.searchParams, body);
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (req.method === 'GET' || result?.status === 200) headers['Cache-Control'] = 'no-cache';
+        res.writeHead(result ? result.status : 404, headers);
+        res.end(JSON.stringify(result ? result.body : { error: 'Not Found' }));
         return;
       }
 

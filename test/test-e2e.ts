@@ -1,4 +1,4 @@
-// E2E encryption + pairing tests (src/e2e/e2e.js) over an in-memory relay that routes like
+// E2E encryption + pairing tests (src/pwa/e2e.js) over an in-memory relay that routes like
 // relay/src/room.ts and records every frame it forwards, so we can check it never saw plaintext.
 import {
   HostE2E,
@@ -13,7 +13,7 @@ import {
   randomBytes,
   PAIRING_TTL_MS,
   MAX_PAIRING_FAILURES,
-} from '../src/e2e/e2e.js';
+} from '../src/pwa/e2e.js';
 
 console.log('='.repeat(75));
 console.log('🧪 E2E ENCRYPTION & PAIRING TEST SUITE (PHASE 2)');
@@ -186,6 +186,20 @@ async function runTests() {
   await until(() => a.got.filter((m) => m.type === 'burst').length >= 50);
   const burst = a.got.filter((m) => m.type === 'burst').map((m) => m.i);
   assert(burst.length === 50 && burst.every((v, i) => v === i), '50 back-to-back messages arrive complete and in order');
+
+  // A long conversation snapshot: bigger than one relay frame, with text that JSON-escapes badly.
+  const bigText = ('C:\\Users\\dev\\"quoted"\n✓ ünïcödé 🚀 ' + SECRET_MARKER + ' ').repeat(9000);
+  const framesBefore = s.relay.frames.length;
+  await s.host.sendTo(a.id, { type: 'big', text: bigText });
+  await a.phone.send({ type: 'big-up', text: bigText });
+  await s.host.sendTo(a.id, { type: 'after-big' });
+  await until(() => a.got.some((m) => m.type === 'after-big') && s.hostGot.some((m) => m.obj?.type === 'big-up'));
+  const bigFrames = s.relay.frames.slice(framesBefore);
+  assert(a.got.find((m) => m.type === 'big')?.text === bigText, `${Math.round(bigText.length / 1024)} KB message reaches the phone intact`);
+  assert(s.hostGot.find((m) => m.obj?.type === 'big-up')?.obj.text === bigText, 'and the laptop, in the other direction');
+  assert(a.got.at(-1)?.type === 'after-big', 'message after a split one still arrives in order');
+  const largest = Math.max(...bigFrames.map((f) => new TextEncoder().encode(f).length));
+  assert(bigFrames.length > 20 && largest < 64 * 1024, `split into ${bigFrames.length} frames, largest ${Math.round(largest / 1024)} KB (relay cap 64 KB)`);
 
   console.log('\n[3] The relay never sees plaintext');
   const all = s.relay.frames.join('\n');

@@ -22,8 +22,8 @@
 4. Claude Code sessions are not reachable by AG-Remote; use Claude Code's Remote Control.
 
 ## 3. Next work: v0.2 hosted relay (agreed 2026-10-27, not started)
-- **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `relay.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
-- Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes; confirm the subdomain name first.
+- **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `remote.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
+- Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes. Subdomain confirmed: `remote.taqnik.in`.
 - This is the paid-release track; keep it separate from personal-tool fixes.
 
 ## 4. Working agreements and gotchas

@@ -5,3 +5,4 @@ test/**
 *.vsix
 .env
 .env.*
+relay/**

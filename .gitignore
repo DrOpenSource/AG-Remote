@@ -10,3 +10,7 @@ node_modules/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# wrangler local state
+.wrangler/
+.dev.vars

@@ -1,0 +1,16 @@
+{
+  "name": "ag-remote-relay",
+  "private": true,
+  "description": "Hosted relay for AG-Remote: forwards messages between a laptop and its phones (Cloudflare Worker + Durable Object)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "test": "node --experimental-strip-types test/test-relay.ts",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "wrangler": "^4.153.0"
+  }
+}

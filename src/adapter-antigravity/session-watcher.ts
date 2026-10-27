@@ -17,6 +17,8 @@ export class SessionWatcher extends EventEmitter {
   };
   private pollTimer: NodeJS.Timeout | null = null;
   private isWatching: boolean = false;
+  private lastFollowCheck: number = 0;
+  private rejectedConvId: string | null = null;
 
   constructor(workspacePath: string = process.cwd(), config: AdapterConfig = defaultConfig) {
     super();
@@ -173,7 +175,69 @@ export class SessionWatcher extends EventEmitter {
     return null;
   }
 
+  /**
+   * Switch to a conversation that was updated after the one we're showing (a new chat, or the
+   * user going back to an older one), unless its commands clearly ran in another workspace.
+   * Only stats files on the normal path; a transcript is read only when a switch is considered.
+   */
+  private followNewestConversation(): void {
+    const brainDir = this.config.brainDir;
+    if (!this.activeConvId || !fs.existsSync(brainDir)) return;
+
+    const transcriptOf = (id: string) => path.join(brainDir, id, '.system_generated', 'logs', 'transcript.jsonl');
+    let activeMtime = 0;
+    try { activeMtime = fs.statSync(transcriptOf(this.activeConvId)).mtimeMs; } catch (_) {}
+
+    let newest: { id: string; mtime: number } | null = null;
+    try {
+      for (const entry of fs.readdirSync(brainDir)) {
+        if (entry === this.activeConvId) continue;
+        try {
+          const mtime = fs.statSync(transcriptOf(entry)).mtimeMs;
+          if (mtime > activeMtime && (!newest || mtime > newest.mtime)) newest = { id: entry, mtime };
+        } catch (_) {}
+      }
+    } catch (_) {}
+    if (!newest || newest.id === this.rejectedConvId) return;
+
+    if (this.belongsToOtherWorkspace(transcriptOf(newest.id))) {
+      this.rejectedConvId = newest.id;
+      return;
+    }
+
+    this.activeConvId = newest.id;
+    this.activeTranscriptPath = transcriptOf(newest.id);
+    this.lastProcessedLineCount = 0;
+    this.lastSnapshot = { status: 'idle', messages: [], pendingApproval: null };
+    this.emit('event', { type: 'session_changed', conversationId: newest.id } as AdapterEvent);
+  }
+
+  private belongsToOtherWorkspace(transcript: string): boolean {
+    const target = this.currentWorkspace.toLowerCase().replace(/\\/g, '/');
+    let matches = 0;
+    let mismatches = 0;
+    try {
+      for (const l of fs.readFileSync(transcript, 'utf8').split('\n')) {
+        if (!l.includes('"Cwd"')) continue;
+        try {
+          for (const tc of JSON.parse(l).tool_calls || []) {
+            if (!tc.args?.Cwd) continue;
+            const cwd = String(tc.args.Cwd).replace(/^"|"$/g, '').toLowerCase().replace(/\\/g, '/');
+            if (cwd === target || cwd.startsWith(target + '/')) matches++; else mismatches++;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return mismatches > 0 && matches === 0;
+  }
+
   public async updateSnapshot(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastFollowCheck >= 2000) {
+      this.lastFollowCheck = now;
+      this.followNewestConversation();
+    }
+
     if (!this.activeTranscriptPath && !this.resolveTranscriptPath()) {
       if (this.lastSnapshot.status !== 'disconnected') {
         this.lastSnapshot.status = 'disconnected';

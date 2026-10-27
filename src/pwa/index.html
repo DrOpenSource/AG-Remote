@@ -56,21 +56,24 @@
       <div class="approval-body">
         <h3 class="approval-desc" id="approvalDesc">Proposed Action</h3>
         <pre class="approval-detail" id="approvalDetail">Details...</pre>
+        <p class="approval-cwd hidden" id="approvalCwd"></p>
+        <p class="approval-ide-only hidden" id="approvalIdeOnly">This request type can only be answered in the IDE.</p>
+        <input type="text" class="approval-deny-note" id="approvalDenyNote" placeholder="Optional: tell the agent what to do instead" autocomplete="off">
         <!-- Interactive Question Options Container -->
         <div class="approval-options hidden" id="approvalOptions"></div>
       </div>
       <div class="approval-actions" id="approvalActions">
         <button class="btn btn-deny" id="btnDeny">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-          Deny
+          No
         </button>
         <button class="btn btn-approve" id="btnApprove">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
-          Allow Once
+          Allow this time
         </button>
         <button class="btn btn-always" id="btnAlwaysAllow">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-          Always Allow
+          Allow in this conversation
         </button>
       </div>
     </section>
@@ -115,7 +118,9 @@
       <h2>Connect to AG Remote</h2>
       <p>Scan the QR code on your PC monitor, or click <strong>AG-Remote</strong> in the VS Code status bar to get your 6-digit PIN:</p>
       <input type="text" id="tokenInput" placeholder="6-digit PIN (e.g. 849 201)" class="token-input" inputmode="numeric" maxlength="10" autocomplete="one-time-code">
+      <p class="pair-error hidden" id="pairError" role="alert"></p>
       <div class="modal-actions">
+        <button class="btn hidden" id="btnCancelPair">Cancel</button>
         <button class="btn btn-primary" id="btnSaveToken">Connect</button>
       </div>
     </div>

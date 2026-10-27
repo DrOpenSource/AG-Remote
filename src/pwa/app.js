@@ -15,6 +15,9 @@
   const approvalDetail = document.getElementById('approvalDetail');
   const approvalOptions = document.getElementById('approvalOptions');
   const approvalActions = document.getElementById('approvalActions');
+  const approvalCwd = document.getElementById('approvalCwd');
+  const approvalIdeOnly = document.getElementById('approvalIdeOnly');
+  const approvalDenyNote = document.getElementById('approvalDenyNote');
   const btnApprove = document.getElementById('btnApprove');
   const btnDeny = document.getElementById('btnDeny');
   const btnStop = document.getElementById('btnStop');
@@ -198,6 +201,12 @@
       if (event.status !== 'awaiting_approval') {
         hideApproval();
       }
+    } else if (event.type === 'session_changed') {
+      // The IDE moved to another conversation; its messages follow as 'message' events.
+      chatFeed.innerHTML = '';
+      emptyState.classList.remove('hidden');
+      hideApproval();
+      updateActiveSessionLabel();
     } else if (event.type === 'adapter_error') {
       showToast(event.error);
     }
@@ -378,6 +387,22 @@
       approvalOptions.classList.add('hidden');
       approvalOptions.innerHTML = '';
       approvalActions.classList.remove('hidden');
+      if (approvalCwd) {
+        approvalCwd.textContent = approval.cwd ? `in ${approval.cwd}` : '';
+        approvalCwd.classList.toggle('hidden', !approval.cwd);
+      }
+      // Only offer the options the IDE accepts for this request.
+      const actions = Array.isArray(approval.actions) ? approval.actions : ['allow_once', 'deny'];
+      const btnAlways = document.getElementById('btnAlwaysAllow');
+      btnApprove.classList.toggle('hidden', !actions.includes('allow_once'));
+      if (btnAlways) btnAlways.classList.toggle('hidden', !actions.includes('allow_conversation'));
+      btnDeny.classList.toggle('hidden', !actions.includes('deny'));
+      if (approvalDenyNote) {
+        approvalDenyNote.value = '';
+        approvalDenyNote.classList.toggle('hidden', !actions.includes('deny'));
+      }
+      if (approvalIdeOnly) approvalIdeOnly.classList.toggle('hidden', actions.length > 0);
+      setApprovalBusy(false);
     }
 
     approvalCard.classList.remove('hidden');
@@ -466,67 +491,65 @@
     }
   }
 
-  async function approveCurrent(option = 'allow_once') {
-    if (!currentApproval || !token) return;
-    const approvalId = currentApproval.id;
-    hideApproval();
-
-    try {
-      const res = await fetch('/api/approve', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ id: approvalId, option })
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to approve action');
-      }
-    } catch (err) {
-      showToast('Network error executing approval.');
-    }
+  function setApprovalBusy(busy) {
+    for (const b of approvalActions.querySelectorAll('button')) b.disabled = busy;
+    approvalCard.classList.toggle('busy', busy);
   }
 
-  async function denyCurrent() {
+  // Keeps the card visible until the IDE confirms; shows the real error otherwise.
+  async function sendApprovalDecision(endpoint, payload, failMsg) {
     if (!currentApproval || !token) return;
     const approvalId = currentApproval.id;
-    hideApproval();
-
+    setApprovalBusy(true);
     try {
-      const res = await fetch('/api/deny', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ id: approvalId })
+        body: JSON.stringify({ id: approvalId, ...payload })
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        showToast(data.error || 'Failed to deny action');
+      if (res.ok) {
+        if (currentApproval && currentApproval.id === approvalId) hideApproval();
+        if (navigator.vibrate) navigator.vibrate(20);
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || failMsg);
     } catch (err) {
-      showToast('Network error executing denial.');
+      showToast('Network error: nothing was sent to the IDE.');
     }
+    setApprovalBusy(false);
+  }
+
+  function approveCurrent(option = 'allow_once') {
+    return sendApprovalDecision('/api/approve', { option }, 'Failed to approve action');
+  }
+
+  function denyCurrent() {
+    const reason = approvalDenyNote ? approvalDenyNote.value.trim() : '';
+    return sendApprovalDecision('/api/deny', reason ? { reason } : {}, 'Failed to deny action');
   }
 
   async function stopCurrent() {
     if (!token) return;
     try {
-      await fetch('/api/stop', {
+      const res = await fetch('/api/stop', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         }
       });
-      updateStatus('idle');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to stop the agent.');
+        return;
+      }
+      showToast('Stop sent to the IDE.');
     } catch (err) {
-      showToast('Failed to stop generation.');
+      showToast('Network error: stop was not sent.');
     }
   }
 
@@ -534,24 +557,34 @@
   btnApprove.addEventListener('click', () => approveCurrent('allow_once'));
   const btnAlwaysAllow = document.getElementById('btnAlwaysAllow');
   if (btnAlwaysAllow) {
-    btnAlwaysAllow.addEventListener('click', () => approveCurrent('always_allow'));
+    btnAlwaysAllow.addEventListener('click', () => approveCurrent('allow_conversation'));
   }
   btnDeny.addEventListener('click', denyCurrent);
   btnStop.addEventListener('click', stopCurrent);
   toastClose.addEventListener('click', hideToast);
 
+  const pairError = document.getElementById('pairError');
+  const btnCancelPair = document.getElementById('btnCancelPair');
+
+  function showPairError(msg) {
+    pairError.textContent = msg;
+    pairError.classList.remove('hidden');
+  }
+
+  // Keep the current pairing until a new PIN succeeds, so opening this by mistake costs nothing.
   const btnRePair = document.getElementById('btnRePair');
   if (btnRePair) {
     btnRePair.addEventListener('click', () => {
-      localStorage.removeItem('ag_remote_token');
-      token = '';
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
+      pairError.classList.add('hidden');
+      btnCancelPair.classList.toggle('hidden', !token);
       pairingModal.classList.remove('hidden');
+      tokenInput.focus();
     });
   }
+  btnCancelPair.addEventListener('click', () => {
+    pairingModal.classList.add('hidden');
+    tokenInput.value = '';
+  });
 
   promptInput.addEventListener('input', () => {
     btnSend.disabled = promptInput.value.trim().length === 0;
@@ -587,22 +620,17 @@
   });
 
   async function handleTokenConnect() {
-    const rawVal = tokenInput.value.trim();
-    if (!rawVal) {
-      showToast('Please enter the 6-digit PIN shown on your PC screen.');
+    const cleanPin = tokenInput.value.replace(/[\s-]/g, '');
+    if (!/^\d{6}$/.test(cleanPin)) {
+      showPairError('Enter the 6-digit PIN shown on your PC.');
       tokenInput.focus();
       return;
     }
-    const cleanPin = rawVal.replace(/[\s-]/g, '');
-    if (cleanPin.length !== 6 && cleanPin.length < 32) {
-      showToast('PIN should be 6 digits (e.g. 849 201).');
-      return;
-    }
 
+    pairError.classList.add('hidden');
     btnSaveToken.disabled = true;
     btnSaveToken.textContent = 'Connecting...';
 
-    // 1. Try exchanging as a pairing code first
     try {
       const pairRes = await fetch(`/pair?t=${encodeURIComponent(cleanPin)}`, {
         headers: { 'Accept': 'application/json' }
@@ -613,34 +641,19 @@
         localStorage.setItem('ag_remote_token', token);
         pairingModal.classList.add('hidden');
         tokenInput.value = '';
+        if (ws) {
+          ws.close();
+          ws = null;
+        }
         startApp();
-        return;
-      } else if (data && data.error && !data.error.includes('Invalid pairing code')) {
-        showToast(data.error);
-        btnSaveToken.disabled = false;
-        btnSaveToken.textContent = 'Connect';
-        return;
-      }
-    } catch (_) {}
-
-    // 2. Otherwise try using directly as session token
-    token = cleanPin;
-    localStorage.setItem('ag_remote_token', token);
-    try {
-      const stateRes = await fetch('/api/state', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (stateRes.ok) {
-        pairingModal.classList.add('hidden');
-        tokenInput.value = '';
-        startApp();
+      } else if (!data.error || data.error.startsWith('Invalid')) {
+        // Codes are single-use and the QR code carries the same code, so a scanned PIN is already spent.
+        showPairError('That PIN is not valid. Each PIN works once, and scanning the QR code uses it. Click AG-Remote on your PC for a fresh PIN.');
       } else {
-        showToast('Invalid pairing PIN. Click AG-Remote in PC status bar for a fresh PIN.');
-        localStorage.removeItem('ag_remote_token');
-        token = '';
+        showPairError(data.error);
       }
     } catch (err) {
-      showToast('Connection failed. Please check Wi-Fi network.');
+      showPairError('Could not reach your PC. Check that the phone is on the same Wi-Fi.');
     } finally {
       btnSaveToken.disabled = false;
       btnSaveToken.textContent = 'Connect';

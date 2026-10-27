@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { dataDir } from './data-dir.ts';
 import crypto from 'crypto';
 
 export interface PairingCode {
@@ -25,7 +26,7 @@ export class AuthManager {
     } else {
       // Persist session token to disk so server restarts don't invalidate phone pairings
       try {
-        const dir = storageDir || path.join(process.cwd(), '.logs');
+        const dir = storageDir || dataDir();
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         this.tokenFilePath = path.join(dir, 'session.token');
         if (fs.existsSync(this.tokenFilePath)) {

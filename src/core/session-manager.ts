@@ -1,5 +1,5 @@
 import EventEmitter from 'events';
-import type { IdeAdapter, SessionSnapshot, Approval, AdapterEvent } from './types.ts';
+import type { IdeAdapter, SessionSnapshot, Approval, ApprovalOption, AdapterEvent } from './types.ts';
 import { AuthManager } from './auth.ts';
 import { auditLogger, AuditLogger } from './logger.ts';
 import { WindowRegistry, windowRegistry, type RegisteredWindow } from './window-registry.ts';
@@ -57,7 +57,7 @@ export class SessionManager extends EventEmitter {
     await this.adapter.sendPrompt(text);
   }
 
-  public async approve(id: string, response?: string, option?: 'allow_once' | 'always_allow'): Promise<void> {
+  public async approve(id: string, response?: string, option?: ApprovalOption): Promise<void> {
     await this.adapter.approve(id, response, option);
   }
 

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { dataDir } from './data-dir.ts';
 
 /**
  * Local-only audit logger.
@@ -10,7 +11,7 @@ export class AuditLogger {
   private logFilePath: string;
 
   constructor(customPath?: string) {
-    const defaultDir = path.join(process.cwd(), '.logs');
+    const defaultDir = dataDir();
     if (!fs.existsSync(defaultDir)) {
       try {
         fs.mkdirSync(defaultDir, { recursive: true });

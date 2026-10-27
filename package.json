@@ -21,16 +21,17 @@
   },
   "scripts": {
     "start": "node --experimental-strip-types bin/ag-remote.mjs",
-    "test": "npm run test:adapter && npm run test:server && npm run test:hub && npm run test:pwa && npm run test:pairing && npm run test:audit && npm run test:env",
-    "test:adapter": "node --experimental-strip-types test/test-adapter.ts",
-    "test:server": "node --experimental-strip-types test/test-server.ts",
-    "test:hub": "node --experimental-strip-types test/test-hub-and-cdp.ts",
-    "test:pwa": "node --experimental-strip-types test/test-pwa.ts",
-    "test:pairing": "node --experimental-strip-types test/test-pairing.ts",
-    "test:audit": "node --experimental-strip-types test/test-production-audit.ts",
-    "test:env": "node --experimental-strip-types test/test-environment-sentinel.ts",
+    "test": "npm run test:ls && npm run test:adapter && npm run test:server && npm run test:hub && npm run test:pwa && npm run test:pairing && npm run test:audit && npm run test:env",
+    "test:adapter": "node --env-file=test/test.env --experimental-strip-types test/test-adapter.ts",
+    "test:server": "node --env-file=test/test.env --experimental-strip-types test/test-server.ts",
+    "test:hub": "node --env-file=test/test.env --experimental-strip-types test/test-hub-and-cdp.ts",
+    "test:pwa": "node --env-file=test/test.env --experimental-strip-types test/test-pwa.ts",
+    "test:pairing": "node --env-file=test/test.env --experimental-strip-types test/test-pairing.ts",
+    "test:audit": "node --env-file=test/test.env --experimental-strip-types test/test-production-audit.ts",
+    "test:env": "node --env-file=test/test.env --experimental-strip-types test/test-environment-sentinel.ts",
     "probe": "node scripts/feasibility-probe.mjs",
-    "package": "npx --yes @vscode/vsce package --no-dependencies"
+    "package": "npx --yes @vscode/vsce package --no-dependencies",
+    "test:ls": "node --env-file=test/test.env --experimental-strip-types test/test-ls-bridge.ts"
   },
   "contributes": {
     "commands": [

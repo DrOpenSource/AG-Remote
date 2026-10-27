@@ -159,6 +159,13 @@ body {
   cursor: pointer;
 }
 
+/* Inline error inside the pairing modal (the toast sits behind the backdrop) */
+.pair-error {
+  color: #fca5a5;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
 /* Approval Card */
 .approval-card {
   margin: 12px 16px;
@@ -629,3 +636,13 @@ body {
 .hidden {
   display: none !important;
 }
+
+/* Live-bridge approval card additions */
+.approval-cwd { margin: 6px 0 0; font-size: 12px; color: #94a3b8; word-break: break-all; }
+.approval-ide-only { margin: 8px 0 0; font-size: 13px; color: #f59e0b; }
+.approval-deny-note {
+  width: 100%; box-sizing: border-box; margin-top: 10px; padding: 10px 12px;
+  border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font-size: 14px;
+}
+.approval-card.busy { opacity: 0.6; }
+.btn.hidden, .approval-deny-note.hidden { display: none; }

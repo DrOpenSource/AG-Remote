@@ -24,6 +24,7 @@
 ## 3. Next work: v0.2 hosted relay (agreed 2026-10-27, not started)
 - **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `remote.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
 - Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes. Subdomain confirmed: `remote.taqnik.in`.
+- **Phase 1 done (2026-10-27):** `relay/` (Worker + `Room` DO) deployed to `https://remote.taqnik.in` on the Workers Free plan (Wrangler logged in as the owner's account). `cd relay; npm test` = 26/26 locally and with `RELAY_URL=https://remote.taqnik.in`. Protocol is in the header comment of `relay/src/room.ts`. Next: Phase 2 (E2E encryption + QR pairing).
 - This is the paid-release track; keep it separate from personal-tool fixes.
 
 ## 4. Working agreements and gotchas

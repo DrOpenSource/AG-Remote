@@ -7,6 +7,7 @@
 | 2026-10-12 | Phase 0/1 | Strict Adapter Isolation (`adapter-antigravity`) | Isolate all Antigravity DOM/CDP/API dependencies so the rest of the codebase (`core`, `server`, `pwa`) remains IDE-agnostic and resilient to IDE changes. | Accepted |
 | 2026-10-12 | Phase 0/1 | Local-first & Zero External Network | Security requirement: zero external network, no cloud relay. (Amended 2026-10-21: binding is `0.0.0.0` with token auth; see decision D-2 below.) | Accepted |
 | 2026-10-12 | Phase 0/1 | Single-use 5-minute QR pairing tokens | Mitigates token interception and unauthorized remote access. | Accepted |
+| 2026-10-27 | D-5 | No "New chat" from the phone (parked) | `StartCascade` exists, but the owner tested that a chat started outside the panel runs in the background and never shows in the IDE's Agent panel. Work would split between phone and desk. Workaround: start the chat in the IDE, continue it from the phone. See §14. | Accepted |
 | 2026-10-22 | D-1 | Approvals go through the local language-server Connect RPC (`HandleCascadeUserInteraction`), not CDP and not `antigravity.*` commands | Spike verified end to end (see §13). CDP selectors were invented; native commands do not carry a permission response. | **Accepted (verified)** |
 | 2026-10-22 | D-4 | Personal-tool scope; unofficial internal API and runtime read of the language-server token are accepted | Owner decision. No supported API exists. Token never persisted/logged/transmitted; localhost only; fail closed; pin tested IDE version. | Accepted |
 | 2026-10-21 | D-2 | Keep `0.0.0.0` default binding, document plain-HTTP LAN risk, add first-run consent + `127.0.0.1` option | Phone-on-Wi-Fi is the core use case (field-verified); token+PIN auth in place. Hardening: consent prompt, Tailscale HTTPS as the recommended path. | Accepted |
@@ -195,3 +196,10 @@ From PRD Section 17:
 - Replace polling with `StreamAgentStateUpdates` if feasible; 250-400 ms polling is acceptable fallback.
 - Avoid reading CommandLine via PowerShell on every call (slow, ~100s of ms): cache token+ports, re-discover on connection failure.
 - Spike code (`src/extension/spike.ts`, 4 temporary commands) is UNCOMMITTED reference material; delete after the NativeBridge lands.
+
+## 14. Multi-window and new-chat findings (2026-10-27)
+
+- **One tab per window.** Each IDE window gets its own channel; a window's chat is chosen only from `GetAllCascadeTrajectories` (its folder in `workspaces[]` / `trajectoryMetadata.workspaceUris`). In live mode the transcript watcher never guesses: the old "newest transcript anywhere" fallback showed, and would have sent prompts to, another project's chat (bug seen with FieldMap, fixed in `a421654`). A window with no Antigravity chat shows an empty tab and refuses prompts.
+- **Hand-over:** when the host window closes, another window takes port 49222; the phone's token keeps working (live-tested).
+- **New chat RPC (not built, D-5):** `StartCascade` is in `resources/bin/language_server.exe`. Request fields include `workspaceUris`, `requestedModel`, `cascadeId`, `source`, `trajectoryType`; response returns `cascadeId`. A chat created this way runs in the background and does **not** appear in the Agent panel (owner-tested). If revisited, the first message would also need a user config (today `sendPrompt` copies the last user step's config).
+- **Claude Code is out of scope:** AG-Remote only speaks to Antigravity's language server. For Claude Code from a phone, use Claude Code's own Remote Control (`/remote-control`); untested whether it covers IDE-extension sessions.

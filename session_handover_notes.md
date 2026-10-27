@@ -8,41 +8,34 @@
 
 ---
 
-# ⮕ START HERE (updated 2026-10-22, read this section only, then NOTES.md §12-§13)
+# ⮕ START HERE (updated 2026-10-27, read this section only, then NOTES.md §13-§14)
 
 ## 1. Where we are
-- **Repo:** `main`, 6 commits, clean except for TEMPORARY spike files (see §5). Last commits: `84e3afb` (verified findings), `67186e9` (feature plan). Tests: `npm test` = 141 green but they are **mock-based** (they do not prove IDE behaviour).
-- **Decisions (NOTES.md decision log):** D-1 approvals via local language-server RPC (VERIFIED); D-2 keep `0.0.0.0` bind, doc'd; D-3 no fake text fallbacks; D-4 **personal tool only**, unofficial API + runtime token read accepted.
-- **Phase 5.0 spike PASSED (2026-10-22):** a real approval sent from code unblocked a real pending `run_command`; file created; agent resumed; confirmed in chat history. Exact protocol is in **NOTES.md §13**. Do not re-derive it.
+- **Working:** approve/deny (+note), prompt, stop, follow new IDE chats, QR/PIN phone pairing over Wi-Fi, Material 3 phone UI, **one tab per IDE window**, host hand-over when a window closes. All live-tested on the phone by the owner (multi-window retest passed 2026-10-27).
+- **Repo:** branch `feat/multi-window` merged into local `main` (2026-10-27). `npm test` = 9 suites green. **Nothing is on GitHub:** `origin` (github.com/DrOpenSource/AG-Remote) has no branches; `main`'s upstream shows "gone". Pushing is the owner's call.
+- **Decisions:** D-1 LS RPC for actions; D-2 `0.0.0.0` + token/PIN; D-3 no fake text fallbacks; D-4 personal tool only; **D-5 no "New chat" from the phone** (runs hidden from the Agent panel). See NOTES.md §1.
 
-## 2. The 6 facts that cost us the most time (do not relearn)
-1. **Live agent state lives in the language-server process with NO `--workspace_id`.** Per-workspace servers show the same steps but the pending step as stale `CANCELED`. Query and act on the workspace-less one.
-2. Auth header `x-codeium-csrf-token` = that process's `--csrf_token`. Token is read from the process command line (`Get-CimInstance Win32_Process`), kept in memory only, never logged.
-3. Each server has an HTTPS port and an HTTP port on 127.0.0.1 (self-signed). Connect/JSON: `POST /exa.language_server_pb.LanguageServerService/<Method>`, headers `content-type: application/json`, `connect-protocol-version: 1`.
-4. Pending approval = step with `status WAITING` and `requestedInteraction` (key `permission` for terminal commands). Approve once: `{cascadeId, interaction:{trajectoryId, stepIndex, permission:{allow:true, scope:1}}}` (scope 1 ONCE, 2 CONVERSATION, 3 WORKSPACE, 4 GLOBAL, 5 PROJECT). Deny: `allow:false` (+ `userDenyInstruction`).
-5. `cascadeId` = folder name under `~/.gemini/antigravity-ide/brain/`; pick newest by `transcript.jsonl` mtime (NOT folder mtime).
-6. `antigravity.acceptAgentStep` and guessed `antigravity.command.accept` are WRONG for tool permissions. CDP selectors in `cdp-bridge.ts` are invented and must go.
+## 2. Facts that cost time (do not relearn)
+1. Live agent state is on the language server with **no `--workspace_id`**; per-workspace servers show stale `CANCELED`. Protocol in NOTES.md §13.
+2. A window's chat comes only from the IDE's conversation list (`GetAllCascadeTrajectories`), never from transcript guessing (NOTES.md §14).
+3. RPC names and request fields can be read from `%LOCALAPPDATA%/Programs/Antigravity/resources/bin/language_server.exe` with `grep -aoE` (e.g. `*StartCascadeRequest).Get[A-Za-z]+`). The JS bundles don't contain them.
+4. Claude Code sessions are not reachable by AG-Remote; use Claude Code's Remote Control.
 
-## 3. Next work: Phase 5.1 "LsBridge" (see TRACKER.md §5 for the feature table)
-1. New `src/adapter-antigravity/ls-bridge.ts`: discover live server (cache token/ports, re-discover on connection failure), `getTrajectory`, `listPending`, `respondPermission(allow, scope, instruction?)`. Port the logic from `src/extension/spike.ts` (`locateAll`, `rpc`, `summarize`).
-2. Wire it into `adapter-antigravity/index.ts` and `cli-bridge.ts`; **delete** CDP selectors and the "Approved:/Denied:/`/stop`" prompt fallbacks.
-3. Feed pending approvals (from LS steps, not transcript guessing) into SessionManager; PWA card must mirror the IDE's 4 options: allow this time / always in this conversation / always this command / no + instruction. Show exact command and cwd.
-4. Probe (needs the user): prompt send (`SendUserCascadeMessage`), stop/cancel RPC, file-access/browser/MCP interaction kinds.
-5. Replace mock tests with shape-contract tests; make tests use a temp log dir. Then repackage and real-phone check.
+## 3. Possible next work (owner picks; none is promised)
+- Push to GitHub (owner decision).
+- HTTPS (Tailscale, docs/TAILSCALE_SETUP.md) so the phone page can install as a real PWA.
+- Later, separately: the paid release (VS Code extension + Gumroad). Don't mix it with personal-tool work.
 
 ## 4. Working agreements and gotchas
-- **The auto-mode classifier blocks ME from reading process command lines / credentials.** Code that does this must run inside the extension when the **user** triggers a command; never try to bypass the block. Ask the user to run it or to switch out of auto mode for that call.
-- The user cannot see my tool output: give exact, numbered, click-level steps (Command Palette names, "Developer: Reload Window", etc.). They paste back notification text.
-- Install loop: `npx --yes @vscode/vsce package --no-dependencies --out spike.vsix`, then `ELECTRON_RUN_AS_NODE=1 "C:/Users/user/AppData/Local/Programs/Antigravity IDE/Antigravity IDE.exe" "C:/Users/user/AppData/Local/Programs/Antigravity IDE/resources/app/out/cli.js" --install-extension spike.vsix --force`; the user must then run **Developer: Reload Window**. Notifications can be missed; the log file is the source of truth.
-- Shell quoting: regex backslashes get eaten inside bash heredocs / JS template literals. Write code with the Write/Edit tools, or `String.raw` in a scratchpad `.mjs`. Always `node --experimental-strip-types -e "import('./src/...')"` as a syntax check before packaging.
-- Sandbox workspace for live tests: `C:\Users\user\Desktop\Dr_OpenSource\Projects\ag-remote-sandbox` (open in its own IDE window). Standard probe prompt: `Run this exact terminal command and nothing else: echo hello > probe.txt`. One conversation (`e6948359`) may still be waiting for approval; harmless.
-- Commits: user approved committing; end messages with the Co-Authored-By line from the session reminder. Never commit `.env`, `.logs/`, `*.vsix` (gitignored).
+- The auto-mode classifier blocks me from reading process command lines/credentials. Such code runs in the extension, triggered by the owner.
+- The owner can't see tool output: give numbered, click-level steps and a pass/fail table.
+- Install: `npm run package`, then in Antigravity **Ctrl+Shift+P → Extensions: Install from VSIX…** → `ag-remote-0.1.0.vsix`, then reload/reopen windows.
+- Live test folders: `Projects/ag-remote-sandbox` and `Projects/ag-remote-sandbox2`. Probe prompt: `Run this exact terminal command and nothing else: echo hello > probe.txt`.
+- Shell quoting eats regex backslashes; patch files with Edit/Write or a scratchpad `.mjs`.
+- Commit only with the owner's OK; end with the Co-Authored-By line. Never commit `.env`, `.logs/`, `*.vsix`.
 
-## 5. Uncommitted temporary files (do NOT commit as-is)
-`src/extension/spike.ts` (+ small edits in `src/extension/index.ts` marked `SPIKE-TEMP` and 6 `ag-remote.spike*` entries in `package.json`). Contains working reference code. Delete after LsBridge lands. Logs go to `.logs/spike.jsonl` (gitignored).
-
-## 6. Kickoff prompt for a new session
-> Read `session_handover_notes.md` section "START HERE" and NOTES.md §13. Start Phase 5.1: build `ls-bridge.ts` from the spike code, wire approve/deny (4 options), remove the CDP and fake-fallback paths, keep tests green. Ask me before any live IDE test and give me numbered click steps.
+## 5. Kickoff prompt for a new session
+> Read `session_handover_notes.md` "START HERE" and NOTES.md §14. Tell me the repo state in two lines, then ask what we're doing today.
 
 ---
 

@@ -29,7 +29,7 @@ User's phone (any network) ──── HTTPS ────┘
 ## Phases
 
 1. **Relay skeleton:** Worker + Durable Object passing messages between two test clients, deployed to `remote.taqnik.in` via Wrangler (owner logs in and approves DNS). **Done 2026-10-27.**
-2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/e2e/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 41/41, `cd relay; npm test` 37/37 locally. Relay redeploy pending the owner's OK.
+2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/e2e/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 41/41, `cd relay; npm test` 37/37 locally and live. **Deployed 2026-10-27.**
 3. **Extension relay transport** + transport setting; direct Wi-Fi unchanged. Includes serving the phone page at `/p/<room>` and the RPC tunnel below.
 4. **Live test** from the owner's phone over mobile data (numbered steps + pass/fail table).
 5. **Public-release prep:** privacy note, limits, push notifications. Scope depends on how public the owner wants to go.

@@ -40,6 +40,7 @@ export type AdapterEvent =
   | { type: 'approval_requested'; approval: Approval }
   | { type: 'status_changed'; status: SessionStatus }
   | { type: 'windows_changed'; windows: any[] }
+  | { type: 'session_changed'; conversationId: string }
   | { type: 'adapter_error'; error: string };
 
 export interface IdeAdapter {

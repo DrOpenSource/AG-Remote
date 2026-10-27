@@ -177,6 +177,42 @@ async function run() {
   const audit = fs.existsSync(auditLogger.getLogPath()) ? fs.readFileSync(auditLogger.getLogPath(), 'utf8') : '';
   assert(!audit.includes(TOKEN), 'csrf token never written to the audit log');
 
+  console.log('\n[Suite 4] Following a new conversation');
+  const writeTranscript = (id: string, lines: object[], mtime: Date) => {
+    const dir = path.join(brain, id, '.system_generated', 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'transcript.jsonl');
+    fs.writeFileSync(file, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+    fs.utimesSync(file, mtime, mtime);
+  };
+  const userInput = (text: string) => ({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: `<USER_REQUEST>${text}</USER_REQUEST>` });
+  const ranIn = (cwd: string) => ({ step_index: 1, type: 'PLANNER_RESPONSE', tool_calls: [{ name: 'run_command', args: { Cwd: cwd, CommandLine: 'dir' } }] });
+  const past = new Date(Date.now() - 60000);
+  writeTranscript(CASCADE, [userInput('hi')], past);
+
+  const SessionWatcher = (await import('../src/adapter-antigravity/session-watcher.ts')).SessionWatcher;
+  const watcher = new SessionWatcher(brain, { ...(await import('../src/adapter-antigravity/config.ts')).defaultConfig, brainDir: brain });
+  const seen: any[] = [];
+  watcher.on('event', e => seen.push(e));
+  await watcher.start();
+  watcher.stop();
+  assert(watcher.getActiveConversationId() === CASCADE, 'starts on the only conversation');
+
+  const FOREIGN = '99999999-0000-0000-0000-000000000000';
+  writeTranscript(FOREIGN, [userInput('elsewhere'), ranIn('D:/other-project')], new Date());
+  (watcher as any).lastFollowCheck = 0;
+  await watcher.updateSnapshot();
+  assert(watcher.getActiveConversationId() === CASCADE, 'ignores a newer chat whose commands ran in another workspace');
+
+  const NEW_CHAT = '22222222-0000-0000-0000-000000000000';
+  writeTranscript(NEW_CHAT, [userInput('brand new chat')], new Date(Date.now() + 1000));
+  (watcher as any).lastFollowCheck = 0;
+  seen.length = 0;
+  await watcher.updateSnapshot();
+  assert(watcher.getActiveConversationId() === NEW_CHAT, 'switches to a new chat opened in the IDE');
+  assert(seen[0]?.type === 'session_changed' && seen[0].conversationId === NEW_CHAT, 'tells the phone the conversation changed before its messages');
+  assert(seen.some(e => e.type === 'message' && e.message.text === 'brand new chat'), 'streams the new chat\'s messages');
+
   server.close();
   fs.rmSync(brain, { recursive: true, force: true });
 

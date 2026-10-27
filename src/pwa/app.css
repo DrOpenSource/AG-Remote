@@ -159,6 +159,13 @@ body {
   cursor: pointer;
 }
 
+/* Inline error inside the pairing modal (the toast sits behind the backdrop) */
+.pair-error {
+  color: #fca5a5;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
 /* Approval Card */
 .approval-card {
   margin: 12px 16px;

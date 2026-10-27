@@ -201,6 +201,12 @@
       if (event.status !== 'awaiting_approval') {
         hideApproval();
       }
+    } else if (event.type === 'session_changed') {
+      // The IDE moved to another conversation; its messages follow as 'message' events.
+      chatFeed.innerHTML = '';
+      emptyState.classList.remove('hidden');
+      hideApproval();
+      updateActiveSessionLabel();
     } else if (event.type === 'adapter_error') {
       showToast(event.error);
     }
@@ -557,18 +563,28 @@
   btnStop.addEventListener('click', stopCurrent);
   toastClose.addEventListener('click', hideToast);
 
+  const pairError = document.getElementById('pairError');
+  const btnCancelPair = document.getElementById('btnCancelPair');
+
+  function showPairError(msg) {
+    pairError.textContent = msg;
+    pairError.classList.remove('hidden');
+  }
+
+  // Keep the current pairing until a new PIN succeeds, so opening this by mistake costs nothing.
   const btnRePair = document.getElementById('btnRePair');
   if (btnRePair) {
     btnRePair.addEventListener('click', () => {
-      localStorage.removeItem('ag_remote_token');
-      token = '';
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
+      pairError.classList.add('hidden');
+      btnCancelPair.classList.toggle('hidden', !token);
       pairingModal.classList.remove('hidden');
+      tokenInput.focus();
     });
   }
+  btnCancelPair.addEventListener('click', () => {
+    pairingModal.classList.add('hidden');
+    tokenInput.value = '';
+  });
 
   promptInput.addEventListener('input', () => {
     btnSend.disabled = promptInput.value.trim().length === 0;
@@ -604,22 +620,17 @@
   });
 
   async function handleTokenConnect() {
-    const rawVal = tokenInput.value.trim();
-    if (!rawVal) {
-      showToast('Please enter the 6-digit PIN shown on your PC screen.');
+    const cleanPin = tokenInput.value.replace(/[\s-]/g, '');
+    if (!/^\d{6}$/.test(cleanPin)) {
+      showPairError('Enter the 6-digit PIN shown on your PC.');
       tokenInput.focus();
       return;
     }
-    const cleanPin = rawVal.replace(/[\s-]/g, '');
-    if (cleanPin.length !== 6 && cleanPin.length < 32) {
-      showToast('PIN should be 6 digits (e.g. 849 201).');
-      return;
-    }
 
+    pairError.classList.add('hidden');
     btnSaveToken.disabled = true;
     btnSaveToken.textContent = 'Connecting...';
 
-    // 1. Try exchanging as a pairing code first
     try {
       const pairRes = await fetch(`/pair?t=${encodeURIComponent(cleanPin)}`, {
         headers: { 'Accept': 'application/json' }
@@ -630,34 +641,19 @@
         localStorage.setItem('ag_remote_token', token);
         pairingModal.classList.add('hidden');
         tokenInput.value = '';
+        if (ws) {
+          ws.close();
+          ws = null;
+        }
         startApp();
-        return;
-      } else if (data && data.error && !data.error.includes('Invalid pairing code')) {
-        showToast(data.error);
-        btnSaveToken.disabled = false;
-        btnSaveToken.textContent = 'Connect';
-        return;
-      }
-    } catch (_) {}
-
-    // 2. Otherwise try using directly as session token
-    token = cleanPin;
-    localStorage.setItem('ag_remote_token', token);
-    try {
-      const stateRes = await fetch('/api/state', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (stateRes.ok) {
-        pairingModal.classList.add('hidden');
-        tokenInput.value = '';
-        startApp();
+      } else if (!data.error || data.error.startsWith('Invalid')) {
+        // Codes are single-use and the QR code carries the same code, so a scanned PIN is already spent.
+        showPairError('That PIN is not valid. Each PIN works once, and scanning the QR code uses it. Click AG-Remote on your PC for a fresh PIN.');
       } else {
-        showToast('Invalid pairing PIN. Click AG-Remote in PC status bar for a fresh PIN.');
-        localStorage.removeItem('ag_remote_token');
-        token = '';
+        showPairError(data.error);
       }
     } catch (err) {
-      showToast('Connection failed. Please check Wi-Fi network.');
+      showPairError('Could not reach your PC. Check that the phone is on the same Wi-Fi.');
     } finally {
       btnSaveToken.disabled = false;
       btnSaveToken.textContent = 'Connect';

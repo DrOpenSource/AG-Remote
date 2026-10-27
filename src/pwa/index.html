@@ -118,7 +118,9 @@
       <h2>Connect to AG Remote</h2>
       <p>Scan the QR code on your PC monitor, or click <strong>AG-Remote</strong> in the VS Code status bar to get your 6-digit PIN:</p>
       <input type="text" id="tokenInput" placeholder="6-digit PIN (e.g. 849 201)" class="token-input" inputmode="numeric" maxlength="10" autocomplete="one-time-code">
+      <p class="pair-error hidden" id="pairError" role="alert"></p>
       <div class="modal-actions">
+        <button class="btn hidden" id="btnCancelPair">Cancel</button>
         <button class="btn btn-primary" id="btnSaveToken">Connect</button>
       </div>
     </div>

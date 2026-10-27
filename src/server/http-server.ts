@@ -6,6 +6,11 @@ import { SessionManager } from '../core/session-manager.ts';
 import { WebSocketServer } from './websocket.ts';
 import type { AdapterEvent } from '../core/types.ts';
 
+/** The IDE window a phone request targets; undefined means the selected window. */
+function windowIdOf(body: any): string | undefined {
+  return body && typeof body.windowId === 'string' && body.windowId ? body.windowId : undefined;
+}
+
 export interface ServerOptions {
   port?: number;
   host?: string;
@@ -371,7 +376,7 @@ export class RemoteServer {
 
         // GET /api/state
         if (req.method === 'GET' && url.pathname === '/api/state') {
-          const snapshot = await this.sessionManager.getSnapshot();
+          const snapshot = await this.sessionManager.getSnapshot(url.searchParams.get('windowId') || undefined);
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
           res.end(JSON.stringify(snapshot));
           return;
@@ -379,7 +384,7 @@ export class RemoteServer {
 
         // GET /api/sessions (Discover active Antigravity conversations)
         if (req.method === 'GET' && url.pathname === '/api/sessions') {
-          const sessions = await this.sessionManager.listSessions();
+          const sessions = await this.sessionManager.listSessions(url.searchParams.get('windowId') || undefined);
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
           res.end(JSON.stringify({ sessions }));
           return;
@@ -393,9 +398,9 @@ export class RemoteServer {
             res.end(JSON.stringify({ error: 'Body must contain "id" string' }));
             return;
           }
-          const success = await this.sessionManager.setActiveSession(body.id);
+          const success = await this.sessionManager.setActiveSession(body.id, windowIdOf(body));
           if (success) {
-            const snap = await this.sessionManager.getSnapshot();
+            const snap = await this.sessionManager.getSnapshot(windowIdOf(body));
             res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
             res.end(JSON.stringify({ status: 'switched', snapshot: snap }));
           } else {
@@ -413,7 +418,7 @@ export class RemoteServer {
             res.end(JSON.stringify({ error: 'Body must contain non-empty "text" field' }));
             return;
           }
-          await this.sessionManager.sendPrompt(body.text);
+          await this.sessionManager.sendPrompt(body.text, windowIdOf(body));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'sent' }));
           return;
@@ -430,7 +435,7 @@ export class RemoteServer {
           try {
             const responseText = typeof body.response === 'string' ? body.response : (body.response ? JSON.stringify(body.response) : undefined);
             const option = ['allow_once', 'allow_conversation', 'always_allow'].includes(body.option) ? body.option : undefined;
-            await this.sessionManager.approve(body.id, responseText, option);
+            await this.sessionManager.approve(body.id, responseText, option, windowIdOf(body));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'approved' }));
           } catch (err: any) {
@@ -451,7 +456,7 @@ export class RemoteServer {
           }
           try {
             const reasonText = typeof body.reason === 'string' ? body.reason : undefined;
-            await this.sessionManager.deny(body.id, reasonText);
+            await this.sessionManager.deny(body.id, reasonText, windowIdOf(body));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'denied' }));
           } catch (err: any) {
@@ -463,8 +468,9 @@ export class RemoteServer {
 
         // POST /api/stop
         if (req.method === 'POST' && url.pathname === '/api/stop') {
+          const body = await this.readJsonBody(req).catch(() => ({}));
           try {
-            await this.sessionManager.stopGeneration();
+            await this.sessionManager.stopGeneration(windowIdOf(body));
           } catch (err: any) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: err.message }));

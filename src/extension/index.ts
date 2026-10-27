@@ -1,7 +1,9 @@
 import http from 'http';
 import path from 'path';
+import crypto from 'crypto';
 import type * as vscodeTypes from 'vscode';
 import { AntigravityAdapter } from '../adapter-antigravity/index.ts';
+import { LsBridge } from '../adapter-antigravity/ls-bridge.ts';
 import { SessionManager } from '../core/session-manager.ts';
 import { RemoteServer } from '../server/index.ts';
 import { PairingManager } from '../pairing/manager.ts';
@@ -30,15 +32,21 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     : process.cwd();
 
   const workspaceName = vscode.workspace.name || path.basename(currentWorkspace) || 'Workspace';
-  activeWindowId = Buffer.from(currentWorkspace).toString('base64url').slice(0, 16) || 'win-default';
+  // Hash of the full folder path: a prefix of the path itself is identical for every project under one user.
+  activeWindowId = crypto.createHash('sha256').update(currentWorkspace.toLowerCase()).digest('hex').slice(0, 16);
 
   const config = vscode.workspace.getConfiguration('agRemote');
   const port = config.get<number>('port', 49222);
   const host = config.get<string>('host') || '0.0.0.0';
   hubPort = port;
 
-  const adapter = new AntigravityAdapter(currentWorkspace);
-  sessionManager = new SessionManager(adapter);
+  // One language-server connection shared by every window's channel.
+  const lsBridge = process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge();
+  const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge });
+  sessionManager = new SessionManager(adapter, undefined, {
+    hostWindowId: activeWindowId,
+    createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge })
+  });
   const pwaDir = path.join(context.extensionPath, 'src', 'pwa');
   server = new RemoteServer(sessionManager, { port, host, pwaDir });
   pairingManager = new PairingManager(sessionManager.auth, port);
@@ -53,6 +61,10 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       isFocused: vscode.window.state.focused,
       pid: process.pid
     });
+    // The host checks in with its own registry too, or it drops off the phone's window list after 10s.
+    heartbeatTimer = setInterval(() => {
+      sessionManager?.registry.heartbeat(activeWindowId!);
+    }, 4000);
 
     // Window focus change listener
     context.subscriptions.push(

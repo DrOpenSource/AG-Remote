@@ -26,12 +26,19 @@ export class SessionWatcher extends EventEmitter {
     this.config = config;
   }
 
+  /**
+   * Set when the adapter picks conversations from the IDE's own list: the watcher then only reads the
+   * conversation it is given and stops guessing from transcripts.
+   */
+  public liveMode: boolean = false;
+
   public async start(): Promise<void> {
     this.activeTranscriptPath = this.resolveTranscriptPath();
     if (!this.activeTranscriptPath) {
       this.lastSnapshot.status = 'disconnected';
       this.emit('event', { type: 'adapter_error', error: this.config.messages.ideNotFound } as AdapterEvent);
-      return;
+      // A window with no conversation yet still needs polling once the adapter assigns one.
+      if (!this.liveMode) return;
     }
 
     this.isWatching = true;
@@ -233,12 +240,14 @@ export class SessionWatcher extends EventEmitter {
 
   public async updateSnapshot(): Promise<void> {
     const now = Date.now();
-    if (now - this.lastFollowCheck >= 2000) {
+    if (!this.liveMode && now - this.lastFollowCheck >= 2000) {
       this.lastFollowCheck = now;
       this.followNewestConversation();
     }
 
-    if (!this.activeTranscriptPath && !this.resolveTranscriptPath()) {
+    if (!this.activeTranscriptPath && this.liveMode) return;
+    if (!this.activeTranscriptPath) this.activeTranscriptPath = this.resolveTranscriptPath();
+    if (!this.activeTranscriptPath) {
       if (this.lastSnapshot.status !== 'disconnected') {
         this.lastSnapshot.status = 'disconnected';
         this.emit('event', { type: 'status_changed', status: 'disconnected' } as AdapterEvent);
@@ -468,10 +477,13 @@ export class SessionWatcher extends EventEmitter {
   public async setActiveConversationId(id: string): Promise<boolean> {
     const transcript = path.join(this.config.brainDir, id, '.system_generated', 'logs', 'transcript.jsonl');
     if (fs.existsSync(transcript)) {
+      const changed = id !== this.activeConvId;
       this.activeConvId = id;
       this.activeTranscriptPath = transcript;
       this.lastProcessedLineCount = 0;
       this.lastSnapshot = { status: 'idle', messages: [], pendingApproval: null };
+      // Announce the switch before the new conversation's messages arrive, so the phone clears first.
+      if (changed) this.emit('event', { type: 'session_changed', conversationId: id } as AdapterEvent);
       await this.updateSnapshot();
       return true;
     }

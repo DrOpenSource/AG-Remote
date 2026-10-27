@@ -1,7 +1,7 @@
 import type { IdeAdapter, SessionSnapshot, SessionStatus, Approval, ApprovalOption, AdapterEvent } from '../core/types.ts';
 import { type AdapterConfig, defaultConfig } from './config.ts';
 import { SessionWatcher } from './session-watcher.ts';
-import { LsBridge, type LiveInteraction } from './ls-bridge.ts';
+import { LsBridge, normalizeWorkspace, type LiveInteraction } from './ls-bridge.ts';
 import { auditLogger } from '../core/logger.ts';
 import { dataDir } from '../core/data-dir.ts';
 import fs from 'fs';
@@ -11,6 +11,8 @@ export interface AdapterDeps {
   /** Live IDE bridge. `null` disables it (tests, offline). Default: real bridge unless AG_REMOTE_LIVE_BRIDGE=0. */
   lsBridge?: LsBridge | null;
   livePollMs?: number;
+  /** Pick this window's conversation from the IDE's conversation list (default true with a bridge). */
+  followFromIde?: boolean;
 }
 
 /**
@@ -64,15 +66,23 @@ export class AntigravityAdapter implements IdeAdapter {
   private liveApproval: Approval | null = null;
   private lastStatus: SessionStatus = 'disconnected';
   private eventCallbacks: Array<(e: AdapterEvent) => void> = [];
+  private workspacePath: string;
+  private followFromIde: boolean;
+  private lastFollowCheck = 0;
+  /** Newest activity in this workspace when the user picked a conversation by hand; only newer activity moves us off it. */
+  private manualPickBaseline = 0;
 
   constructor(workspacePath: string = process.cwd(), customConfig: Partial<AdapterConfig> = {}, deps: AdapterDeps = {}) {
     this.config = { ...defaultConfig, ...customConfig };
+    this.workspacePath = workspacePath;
     this.watcher = new SessionWatcher(workspacePath, this.config);
     this.ls = deps.lsBridge !== undefined
       ? deps.lsBridge
       : (process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge());
     this.livePollMs = deps.livePollMs ?? 1000;
     if (this.ls && deps.lsBridge === undefined) this.ls.onConversationsRaw = recordConversationShape;
+    this.followFromIde = !!this.ls && (deps.followFromIde ?? true);
+    this.watcher.liveMode = this.followFromIde;
 
     this.watcher.on('event', (e: AdapterEvent) => {
       if (this.ls && (e.type === 'approval_requested' || e.type === 'status_changed')) {
@@ -110,8 +120,36 @@ export class AntigravityAdapter implements IdeAdapter {
     }
   }
 
+  /**
+   * Moves to this window's newest conversation (a new chat, or an older one the user resumed in the IDE).
+   * Uses the IDE's own conversation list, which records each conversation's folder.
+   */
+  private async followIdeConversation(): Promise<void> {
+    if (!this.ls || !this.followFromIde) return;
+    const now = Date.now();
+    if (now - this.lastFollowCheck < 2000) return;
+    this.lastFollowCheck = now;
+
+    const convs = await this.ls.listConversations().catch(() => null);
+    if (!convs) return;
+    const ws = normalizeWorkspace(this.workspacePath);
+    const newest = convs.find(c => c.workspaces.includes(ws));
+    const current = this.watcher.getActiveConversationId();
+    if (!newest || newest.cascadeId === current) return;
+
+    const cur = convs.find(c => c.cascadeId === current);
+    const currentIsOurs = !!cur && cur.workspaces.includes(ws);
+    if (currentIsOurs && newest.lastActivity <= Math.max(cur!.lastActivity, this.manualPickBaseline)) return;
+
+    if (await this.watcher.setActiveConversationId(newest.cascadeId)) {
+      this.livePending = null;
+      this.liveApproval = null;
+    }
+  }
+
   private async pollLive(): Promise<void> {
     if (!this.ls) return;
+    await this.followIdeConversation();
     const cid = this.watcher.getActiveConversationId();
     let pending: LiveInteraction | null = null;
     if (cid) {
@@ -216,7 +254,14 @@ export class AntigravityAdapter implements IdeAdapter {
     }));
   }
 
+  public getWorkspacePath(): string {
+    return this.workspacePath;
+  }
+
   public setWorkspace(workspacePath: string): void {
+    this.workspacePath = workspacePath;
+    this.lastFollowCheck = 0;
+    this.manualPickBaseline = 0;
     this.livePending = null;
     this.liveApproval = null;
     this.watcher.setWorkspace(workspacePath);
@@ -227,6 +272,11 @@ export class AntigravityAdapter implements IdeAdapter {
     auditLogger.log('SWITCH_SESSION', { targetId: id });
     const success = await this.watcher.setActiveConversationId(id);
     if (success) {
+      if (this.ls && this.followFromIde) {
+        const ws = normalizeWorkspace(this.workspacePath);
+        const convs = await this.ls.listConversations().catch(() => null);
+        this.manualPickBaseline = Math.max(0, ...(convs || []).filter(c => c.workspaces.includes(ws)).map(c => c.lastActivity));
+      }
       this.livePending = null;
       this.liveApproval = null;
       await this.pollLive();

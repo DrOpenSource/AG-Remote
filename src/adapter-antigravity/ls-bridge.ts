@@ -17,9 +17,19 @@ import type { PromptImage } from '../core/types.ts';
 
 export interface LsServer {
   pid: number;
+  /** --workspace_id: older builds' per-project copies, whose state is stale. Never used for live calls. */
   workspaceId: string | null;
   token: string;
   ports: number[];
+  ppid?: number;
+  /** language_server_* (builds up to Oct 2026) or agy (one per window, from late Oct 2026) */
+  kind?: 'language_server' | 'agy';
+  /** --parent_pipe_path: attached to a running IDE */
+  attached?: boolean;
+  /** --add-dir: the window's folder(s) an agy server works in, normalized */
+  addDirs?: string[];
+  /** --app_data_dir: which ~/.gemini/<dir> holds its chat history */
+  appDataDir?: string;
 }
 
 export type Discover = () => Promise<LsServer[]>;
@@ -156,58 +166,84 @@ export function extractPending(cascadeId: string, trajectory: any): LiveInteract
   return null;
 }
 
-/** Default discovery on Windows: list language_server processes and their loopback listening ports. */
-export const discoverWindowsLanguageServers: Discover = async () => {
-  const run = (cmd: string, args: string[]) => new Promise<string>(res =>
-    execFile(cmd, args, { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (_e, out) => res(String(out || ''))));
-  const raw = await run('powershell.exe', ['-NoProfile', '-Command',
-    "Get-CimInstance Win32_Process -Filter \"Name='language_server_windows_x64.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"]);
-  let procs: any[] = [];
-  try { const j = JSON.parse(raw); procs = Array.isArray(j) ? j : [j]; } catch (_) { return []; }
-  const netstat = await run('netstat.exe', ['-ano', '-p', 'TCP']);
-  return procs.map(p => {
-    const cmd = String(p.CommandLine || '');
-    const token = (/(?:^|\s)--csrf_token[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || '';
-    const workspaceId = (/--workspace_id[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || null;
-    const ports = netstat.split(/\r?\n/)
-      .filter(l => /LISTENING/.test(l) && l.trim().endsWith(String(p.ProcessId)) && /127\.0\.0\.1:/.test(l))
-      .map(l => Number((/127\.0\.0\.1:(\d+)/.exec(l) || [])[1]))
-      .filter(Boolean);
-    return { pid: Number(p.ProcessId), workspaceId, token, ports };
-  }).filter(s => s.token && s.ports.length > 0);
-};
+export type ParsedServer = Omit<LsServer, 'pid' | 'ports' | 'ppid'>;
 
-export interface PosixLsProcess { pid: number; ppid: number; workspaceId: string | null; token: string; attached: boolean }
+/** All values of a --flag (as `--flag value` or `--flag=value`, optionally quoted); never matches --other_flag. */
+function flagValues(cmd: string, flag: string): string[] {
+  const re = new RegExp(`(?:^|\\s)--${flag}(?:=|\\s+)(?:"([^"]*)"|([^\\s"]+))`, 'g');
+  return [...cmd.matchAll(re)].map(m => m[1] ?? m[2]).filter(v => v && !v.startsWith('--'));
+}
 
 /**
- * Language-server processes from `ps -axww -o pid=,ppid=,command=` output. The binary is
- * language_server_macos_arm / _macos_x64 / _linux_x64 / etc.; the path may contain spaces
- * (/Applications/Antigravity IDE.app/...), so match the name anywhere before the flags. Pure; exported for tests.
+ * Recognises the agent server in a process command line, on any OS. Antigravity has shipped two:
+ *  - language_server_<os>_<arch>: one shared server with no --workspace_id (live state), plus stale
+ *    per-project copies that have one;
+ *  - agy (from late Oct 2026): one server per IDE window, its folder in --add-dir.
+ * The executable is what comes before the first ` --` flag; its path may contain spaces
+ * ("/Applications/Antigravity IDE.app/..."). Returns null for anything else. Pure; exported for tests.
  */
-export function parsePsOutput(raw: string): PosixLsProcess[] {
-  const out: PosixLsProcess[] = [];
+export function parseServerCommandLine(cmd: string): ParsedServer | null {
+  const exe = cmd.split(/\s--/)[0].trim().replace(/^"|"$/g, '');
+  const base = (exe.split(/[\\/]/).pop() || '').toLowerCase().replace(/\.exe$/, '');
+  const kind = base.startsWith('language_server') ? 'language_server' : base === 'agy' ? 'agy' : null;
+  if (!kind) return null;
+  const token = flagValues(cmd, 'csrf_token')[0] || '';
+  if (!token) return null;
+  return {
+    kind,
+    token,
+    workspaceId: flagValues(cmd, 'workspace_id')[0] || null,
+    attached: /(?:^|\s)--parent_pipe_path[= ]/.test(cmd),
+    addDirs: flagValues(cmd, 'add-dir').map(normalizeWorkspace),
+    appDataDir: flagValues(cmd, 'app_data_dir')[0]
+  };
+}
+
+/** Agent-server processes from `ps -axww -o pid=,ppid=,command=` output. Pure; exported for tests. */
+export function parsePsOutput(raw: string): Array<ParsedServer & { pid: number; ppid: number }> {
+  const out: Array<ParsedServer & { pid: number; ppid: number }> = [];
   for (const line of raw.split(/\r?\n/)) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-    if (!m || !/(?:^|\/)language_server_[\w.-]+(\s|$)/.test(m[3])) continue;
-    const cmd = m[3];
-    const token = (/(?:^|\s)--csrf_token[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || '';
-    if (!token) continue;
-    const workspaceId = (/--workspace_id[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || null;
-    out.push({ pid: Number(m[1]), ppid: Number(m[2]), workspaceId, token, attached: /\s--parent_pipe_path[= ]/.test(cmd) });
+    const parsed = m && parseServerCommandLine(m[3]);
+    if (parsed) out.push({ pid: Number(m![1]), ppid: Number(m![2]), ...parsed });
   }
   return out;
 }
 
 /**
- * A Mac can run more than one workspace-less server: seen 2026-10-28, a leftover one without
- * --parent_pipe_path next to the live one. Order candidates so the live one is tried first:
- * attached to a running IDE (--parent_pipe_path) first, orphans (re-parented to launchd/init, ppid 1) last.
- * Pure; exported for tests.
+ * Order live-call candidates so the right server is tried first:
+ *  1. agy for this window's folder (each window has its own; another window's would act on the wrong chat);
+ *  2. attached to a running IDE (--parent_pipe_path; a Mac was seen with a leftover server next to the live one);
+ *  3. not orphaned (re-parented to launchd/init, ppid 1).
+ * Stable otherwise. Pure; exported for tests.
  */
-export function rankLanguageServers<T extends Pick<PosixLsProcess, 'ppid' | 'attached'>>(procs: T[]): T[] {
-  const score = (p: T) => (p.attached ? 2 : 0) + (p.ppid === 1 ? -1 : 0);
+export function rankLanguageServers<T extends Pick<LsServer, 'ppid' | 'attached' | 'addDirs'>>(procs: T[], workspace?: string): T[] {
+  const ws = workspace ? normalizeWorkspace(workspace) : '';
+  const score = (p: T) => (ws && p.addDirs?.includes(ws) ? 4 : 0) + (p.attached ? 2 : 0) + (p.ppid === 1 ? -1 : 0);
   return procs.map((p, i) => ({ p, i })).sort((a, b) => score(b.p) - score(a.p) || a.i - b.i).map(x => x.p);
 }
+
+/** Default discovery on Windows: agent-server processes and their loopback listening ports. */
+export const discoverWindowsLanguageServers: Discover = async () => {
+  const run = (cmd: string, args: string[]) => new Promise<string>(res =>
+    execFile(cmd, args, { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (_e, out) => res(String(out || ''))));
+  const raw = await run('powershell.exe', ['-NoProfile', '-Command',
+    "Get-CimInstance Win32_Process -Filter \"Name LIKE 'language_server%' OR Name = 'agy.exe'\" | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress"]);
+  let procs: any[] = [];
+  try { const j = JSON.parse(raw); procs = Array.isArray(j) ? j : [j]; } catch (_) { return []; }
+  const netstat = await run('netstat.exe', ['-ano', '-p', 'TCP']);
+  const servers: LsServer[] = [];
+  for (const p of procs) {
+    const parsed = parseServerCommandLine(String(p?.CommandLine || ''));
+    if (!parsed) continue;
+    const ports = netstat.split(/\r?\n/)
+      .filter(l => /LISTENING/.test(l) && l.trim().endsWith(String(p.ProcessId)) && /127\.0\.0\.1:/.test(l))
+      .map(l => Number((/127\.0\.0\.1:(\d+)/.exec(l) || [])[1]))
+      .filter(Boolean);
+    if (ports.length > 0) servers.push({ pid: Number(p.ProcessId), ppid: Number(p.ParentProcessId), ports, ...parsed });
+  }
+  return servers;
+};
 
 /** Loopback TCP listening ports per pid, from `lsof -nP -iTCP -sTCP:LISTEN` or `ss -ltnpH` output. Pure; exported for tests. */
 export function parseListeningPorts(raw: string): Map<number, number[]> {
@@ -232,7 +268,7 @@ export function parseListeningPorts(raw: string): Map<number, number[]> {
 export const discoverPosixLanguageServers: Discover = async () => {
   const run = (cmd: string, args: string[]) => new Promise<string>(res =>
     execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (_e, out) => res(String(out || ''))));
-  const procs = rankLanguageServers(parsePsOutput(await run('ps', ['-axww', '-o', 'pid=,ppid=,command='])));
+  const procs = parsePsOutput(await run('ps', ['-axww', '-o', 'pid=,ppid=,command=']));
   if (procs.length === 0) return [];
   const pids = procs.map(p => p.pid).join(',');
   // GUI apps on macOS get PATH=/usr/bin:/bin:/usr/sbin:/sbin, but try the absolute path too.
@@ -255,9 +291,12 @@ export class LsBridge {
   private lastDiscovery = 0;
   private discoveryCooldownMs: number;
   private verifyTimeoutMs: number;
+  /** The IDE window's folder: picks that window's agy server when each window has its own. */
+  private workspace?: string;
 
-  constructor(opts: { discover?: Discover; timeoutMs?: number; discoveryCooldownMs?: number; verifyTimeoutMs?: number } = {}) {
+  constructor(opts: { discover?: Discover; timeoutMs?: number; discoveryCooldownMs?: number; verifyTimeoutMs?: number; workspace?: string } = {}) {
     this.discover = opts.discover || discoverLanguageServers;
+    this.workspace = opts.workspace;
     this.timeoutMs = opts.timeoutMs ?? 4000;
     this.discoveryCooldownMs = opts.discoveryCooldownMs ?? 10000;
     this.verifyTimeoutMs = opts.verifyTimeoutMs ?? 3000;
@@ -268,8 +307,9 @@ export class LsBridge {
   }
 
   /** The server this bridge talks to, without its token (for diagnostics). */
-  public describeEndpoint(): { pid: number; port: number; scheme: string } | null {
-    return this.endpoint ? { pid: this.endpoint.server.pid, port: this.endpoint.port, scheme: this.endpoint.scheme } : null;
+  public describeEndpoint(): { pid: number; port: number; scheme: string; kind?: string } | null {
+    const ep = this.endpoint;
+    return ep ? { pid: ep.server.pid, port: ep.port, scheme: ep.scheme, kind: ep.server.kind } : null;
   }
 
   public async getTrajectory(cascadeId: string): Promise<any | null> {
@@ -380,9 +420,9 @@ export class LsBridge {
 
     let servers: LsServer[] = [];
     try { servers = await this.discover(); } catch (_) { servers = []; }
-    // Only the workspace-less server holds live agent state; per-workspace servers show stale copies,
-    // so never fall back to them.
-    for (const server of servers.filter(s => !s.workspaceId)) {
+    // Only workspace-less servers hold live agent state; language_server's per-workspace copies are stale,
+    // so never fall back to them. With one agy per window, this window's comes first.
+    for (const server of rankLanguageServers(servers.filter(s => !s.workspaceId), this.workspace)) {
       for (const port of server.ports) {
         for (const scheme of ['https', 'http'] as const) {
           const ep = { server, port, scheme };

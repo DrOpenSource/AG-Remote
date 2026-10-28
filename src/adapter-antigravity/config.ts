@@ -8,7 +8,10 @@ import os from 'os';
 import path from 'path';
 
 export interface AdapterConfig {
+  /** Chat-history folder. Setting only this (tests) reads just this folder. */
   brainDir: string;
+  /** All chat-history folders to read; Antigravity builds have used different ones. */
+  brainDirs?: string[];
   timing: {
     pollIntervalMs: number;
     actionTimeoutMs: number;
@@ -22,7 +25,12 @@ export interface AdapterConfig {
 }
 
 export const defaultConfig: AdapterConfig = {
-  brainDir: path.join(os.homedir(), '.gemini', 'antigravity-ide', 'brain'),
+  brainDir: path.join(os.homedir(), '.gemini', 'antigravity', 'brain'),
+  // Builds from late October 2026 (agy.exe) write to antigravity/; earlier ones to antigravity-ide/.
+  brainDirs: [
+    path.join(os.homedir(), '.gemini', 'antigravity', 'brain'),
+    path.join(os.homedir(), '.gemini', 'antigravity-ide', 'brain')
+  ],
   timing: {
     pollIntervalMs: 500, // Meets Requirement: idle polling >= 500 ms interval
     actionTimeoutMs: 3000,

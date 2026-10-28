@@ -94,6 +94,8 @@ export class AntigravityAdapter implements IdeAdapter {
 
   constructor(workspacePath: string = process.cwd(), customConfig: Partial<AdapterConfig> = {}, deps: AdapterDeps = {}) {
     this.config = { ...defaultConfig, ...customConfig };
+    // An explicit single folder (tests, custom setups) replaces the default list
+    if (customConfig.brainDir && !customConfig.brainDirs) this.config.brainDirs = [customConfig.brainDir];
     this.workspacePath = workspacePath;
     this.watcher = new SessionWatcher(workspacePath, this.config);
     this.ls = deps.lsBridge !== undefined

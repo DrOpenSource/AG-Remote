@@ -201,12 +201,14 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
    * windows try at once exactly one wins; the rest get EADDRINUSE and stay linked to the winner.
    */
   const becomeHost = async (): Promise<boolean> => {
-    // One language-server connection shared by every window's channel.
-    const lsBridge = process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge();
-    const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge });
+    // A bridge per window: newer Antigravity builds run one agent server (agy) per window, and actions
+    // must reach that window's. With the older single shared server, every bridge finds the same one.
+    const bridgeFor = (workspacePath: string) =>
+      process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge({ workspace: workspacePath });
+    const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge: bridgeFor(currentWorkspace) });
     const sm = new SessionManager(adapter, undefined, {
       hostWindowId: activeWindowId!,
-      createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge })
+      createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge: bridgeFor(workspacePath) })
     });
     const srv = new RemoteServer(sm, { port, host, pwaDir });
     try {

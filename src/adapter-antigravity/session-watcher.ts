@@ -72,22 +72,55 @@ export class SessionWatcher extends EventEmitter {
     return this.lastSnapshot.pendingApproval;
   }
 
+  /**
+   * Chat-history folders that exist. Antigravity has moved this between builds
+   * (~/.gemini/antigravity-ide/brain, then ~/.gemini/antigravity/brain), so all are read.
+   */
+  private brainDirs(): string[] {
+    const dirs = this.config.brainDirs?.length ? this.config.brainDirs : [this.config.brainDir];
+    return [...new Set(dirs)].filter(d => fs.existsSync(d));
+  }
+
+  /** A conversation's transcript, in whichever history folder holds it. */
+  private transcriptOf(id: string): string | null {
+    for (const dir of this.brainDirs()) {
+      const p = path.join(dir, id, '.system_generated', 'logs', 'transcript.jsonl');
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  /** Every conversation with a transcript, across all history folders. */
+  private allTranscripts(): Array<{ id: string; transcript: string }> {
+    const out: Array<{ id: string; transcript: string }> = [];
+    const seen = new Set<string>();
+    for (const dir of this.brainDirs()) {
+      let entries: string[] = [];
+      try { entries = fs.readdirSync(dir); } catch (_) { continue; }
+      for (const id of entries) {
+        if (seen.has(id)) continue;
+        const transcript = path.join(dir, id, '.system_generated', 'logs', 'transcript.jsonl');
+        if (fs.existsSync(transcript)) {
+          seen.add(id);
+          out.push({ id, transcript });
+        }
+      }
+    }
+    return out;
+  }
+
   public resolveTranscriptPath(): string | null {
-    const brainDir = this.config.brainDir;
-    if (!fs.existsSync(brainDir)) return null;
+    if (this.brainDirs().length === 0) return null;
 
     if (this.activeConvId) {
-      const explicitPath = path.join(brainDir, this.activeConvId, '.system_generated', 'logs', 'transcript.jsonl');
-      if (fs.existsSync(explicitPath)) {
-        return explicitPath;
-      }
+      const explicitPath = this.transcriptOf(this.activeConvId);
+      if (explicitPath) return explicitPath;
     }
     // The IDE's list says which conversations belong to this window; a guess here could show
     // (and send prompts to) another project's chat when this window has none yet.
     if (this.liveMode) return null;
 
     try {
-      const entries = fs.readdirSync(brainDir);
       const targetWorkspace = this.currentWorkspace.toLowerCase().replace(/\\/g, '/');
 
       interface Candidate {
@@ -101,8 +134,7 @@ export class SessionWatcher extends EventEmitter {
 
       const candidates: Candidate[] = [];
 
-      for (const entry of entries) {
-        const transcript = path.join(brainDir, entry, '.system_generated', 'logs', 'transcript.jsonl');
+      for (const { id: entry, transcript } of this.allTranscripts()) {
         if (fs.existsSync(transcript)) {
           const stat = fs.statSync(transcript);
           let cwdMatches = 0;
@@ -193,32 +225,29 @@ export class SessionWatcher extends EventEmitter {
    * Only stats files on the normal path; a transcript is read only when a switch is considered.
    */
   private followNewestConversation(): void {
-    const brainDir = this.config.brainDir;
-    if (!this.activeConvId || !fs.existsSync(brainDir)) return;
+    if (!this.activeConvId || this.brainDirs().length === 0) return;
 
-    const transcriptOf = (id: string) => path.join(brainDir, id, '.system_generated', 'logs', 'transcript.jsonl');
     let activeMtime = 0;
-    try { activeMtime = fs.statSync(transcriptOf(this.activeConvId)).mtimeMs; } catch (_) {}
+    const activePath = this.transcriptOf(this.activeConvId);
+    try { if (activePath) activeMtime = fs.statSync(activePath).mtimeMs; } catch (_) {}
 
-    let newest: { id: string; mtime: number } | null = null;
-    try {
-      for (const entry of fs.readdirSync(brainDir)) {
-        if (entry === this.activeConvId) continue;
-        try {
-          const mtime = fs.statSync(transcriptOf(entry)).mtimeMs;
-          if (mtime > activeMtime && (!newest || mtime > newest.mtime)) newest = { id: entry, mtime };
-        } catch (_) {}
-      }
-    } catch (_) {}
+    let newest: { id: string; mtime: number; transcript: string } | null = null;
+    for (const { id, transcript } of this.allTranscripts()) {
+      if (id === this.activeConvId) continue;
+      try {
+        const mtime = fs.statSync(transcript).mtimeMs;
+        if (mtime > activeMtime && (!newest || mtime > newest.mtime)) newest = { id, mtime, transcript };
+      } catch (_) {}
+    }
     if (!newest || newest.id === this.rejectedConvId) return;
 
-    if (this.belongsToOtherWorkspace(transcriptOf(newest.id))) {
+    if (this.belongsToOtherWorkspace(newest.transcript)) {
       this.rejectedConvId = newest.id;
       return;
     }
 
     this.activeConvId = newest.id;
-    this.activeTranscriptPath = transcriptOf(newest.id);
+    this.activeTranscriptPath = newest.transcript;
     this.lastProcessedLineCount = 0;
     this.lastSnapshot = { status: 'idle', messages: [], pendingApproval: null };
     this.emit('event', { type: 'session_changed', conversationId: newest.id } as AdapterEvent);
@@ -414,14 +443,9 @@ export class SessionWatcher extends EventEmitter {
   }
 
   public listAllSessions(): Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> {
-    const brainDir = this.config.brainDir;
-    if (!fs.existsSync(brainDir)) return [];
-
     const sessions: Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> = [];
     try {
-      const entries = fs.readdirSync(brainDir);
-      for (const entry of entries) {
-        const transcript = path.join(brainDir, entry, '.system_generated', 'logs', 'transcript.jsonl');
+      for (const { id: entry, transcript } of this.allTranscripts()) {
         if (fs.existsSync(transcript)) {
           const stat = fs.statSync(transcript);
           let title = `Session ${entry.slice(0, 8)}`;
@@ -480,8 +504,8 @@ export class SessionWatcher extends EventEmitter {
   }
 
   public async setActiveConversationId(id: string): Promise<boolean> {
-    const transcript = path.join(this.config.brainDir, id, '.system_generated', 'logs', 'transcript.jsonl');
-    if (fs.existsSync(transcript)) {
+    const transcript = this.transcriptOf(id);
+    if (transcript) {
       const changed = id !== this.activeConvId;
       this.activeConvId = id;
       this.activeTranscriptPath = transcript;

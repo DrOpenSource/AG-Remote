@@ -6,6 +6,7 @@ import type * as vscodeTypes from 'vscode';
 import { AntigravityAdapter } from '../adapter-antigravity/index.ts';
 import { LsBridge } from '../adapter-antigravity/ls-bridge.ts';
 import { collectDiagnostics } from '../adapter-antigravity/diagnostics.ts';
+import { bestResultsTips, updateNotice } from './user-guidance.ts';
 import { SessionManager } from '../core/session-manager.ts';
 import { RemoteServer } from '../server/index.ts';
 import type { RelayPhone } from '../server/http-server.ts';
@@ -13,6 +14,7 @@ import { PairingManager, type PairingInfo } from '../pairing/manager.ts';
 import { QRCode } from '../pairing/qr.ts';
 import { RelayHost, type RelayStatus } from '../relay-host/relay-host.ts';
 import { RelayStore } from '../relay-host/relay-store.ts';
+import { dataDir } from '../core/data-dir.ts';
 
 let server: RemoteServer | null = null;
 let sessionManager: SessionManager | null = null;
@@ -64,6 +66,14 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
   });
 
   // Status bar and commands exist once per window; what they do depends on whether this window hosts.
+  // Once per new version: other open windows keep the old version until they are reloaded.
+  // Versions before 0.2.3 didn't record theirs; an existing data folder means this is an update.
+  const version: string = context.extension?.packageJSON?.version || '';
+  const lastVersion = context.globalState.get<string>('agRemote.lastVersion') ?? (fs.existsSync(dataDir()) ? 'an earlier version' : undefined);
+  const notice = updateNotice(lastVersion, version);
+  if (version) context.globalState.update('agRemote.lastVersion', version);
+  if (notice) vscode.window.showInformationMessage(notice);
+
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'ag-remote.showPairingQr';
   statusBarItem.show();
@@ -442,7 +452,7 @@ function wifiPanelHtml(pairing: PairingInfo): string {
       background: rgba(245, 158, 11, 0.15);
       color: #f59e0b;
       margin-bottom: 16px;
-    }
+    }${TIPS_CSS}
   </style>
 </head>
 <body>
@@ -462,6 +472,7 @@ function wifiPanelHtml(pairing: PairingInfo): string {
   <p style="font-size: 11px; color: #64748b;">
     Connected via local Wi-Fi or Tailscale. No data leaves your machine.
   </p>
+  ${tipsHtml()}
 </body>
 </html>`;
 }
@@ -469,6 +480,20 @@ function wifiPanelHtml(pairing: PairingInfo): string {
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
+
+/** "For best results" box shared by both pairing panels. */
+function tipsHtml(): string {
+  return `<div class="tips">
+    <p><strong>For best results</strong></p>
+    <ul>${bestResultsTips(process.platform).map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>
+  </div>`;
+}
+
+const TIPS_CSS = `
+    .tips { border-top: 1px solid #334155; margin: 8px auto 0 auto; padding-top: 16px; max-width: 420px; text-align: left; }
+    .tips p { text-align: center; }
+    .tips ul { margin: 0; padding-left: 18px; }
+    .tips li { color: #94a3b8; font-size: 12px; margin-bottom: 8px; }`;
 
 function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paired: RelayPhone[]): string {
   const pin = wifi ? `${wifi.pairingCode.slice(0, 3)} ${wifi.pairingCode.slice(3)}` : '';
@@ -520,7 +545,7 @@ function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paire
     .paired ul { list-style: none; padding: 0; margin: 0 auto 8px auto; max-width: 420px; }
     .paired li { font-size: 13px; padding: 4px 0; }
     .paired li span { color: #64748b; font-size: 11px; }
-    .paired a { color: #818cf8; font-size: 13px; }
+    .paired a { color: #818cf8; font-size: 13px; }${TIPS_CSS}
   </style>
 </head>
 <body>
@@ -541,6 +566,7 @@ function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paire
     <p><strong>Paired phones</strong></p>
     ${pairedHtml}
   </div>
+  ${tipsHtml()}
 </body>
 </html>`;
 }

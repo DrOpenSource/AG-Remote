@@ -4,6 +4,7 @@ import { SessionManager } from '../src/core/session-manager.ts';
 import { RemoteServer } from '../src/server/index.ts';
 import { PairingManager } from '../src/pairing/manager.ts';
 import { QRCode } from '../src/pairing/qr.ts';
+import { bestResultsTips, updateNotice } from '../src/extension/user-guidance.ts';
 
 console.log('='.repeat(75));
 console.log('🧪 PAIRING, QR ENCODING & REMOTE ACCESS TEST SUITE (PHASE 5)');
@@ -100,6 +101,17 @@ async function runTests() {
   console.log('\n[Suite 5] Server Teardown');
   await server.stop();
   assert(true, 'Server stopped cleanly');
+
+  console.log('\n[Suite 6] Best-results tips and the after-update message');
+  const winTips = bestResultsTips('win32');
+  const macTips = bestResultsTips('darwin');
+  assert(winTips.some(t => t.includes('reload every open Antigravity window') && t.includes('Ctrl+Shift+P')), 'tips: reload every window, with the Windows shortcut');
+  assert(macTips.some(t => t.includes('Cmd+Shift+P')) && !macTips.some(t => t.includes('Ctrl+Shift+P')), 'tips: macOS shows Cmd, not Ctrl');
+  assert(winTips.some(t => t.includes('Copy Diagnostics')), 'tips: point to Copy Diagnostics when the phone shows no conversation');
+  assert(updateNotice(undefined, '0.2.3') === null, 'no update message on a first install');
+  assert(updateNotice('0.2.3', '0.2.3') === null, 'no message when the version did not change');
+  const notice = updateNotice('0.2.2', '0.2.3') || '';
+  assert(notice.includes('0.2.3') && notice.includes('Reload every other open Antigravity window'), 'after an update: says which version and to reload the other windows');
 
   console.log('\n' + '='.repeat(75));
   console.log(`RESULTS: ${passed} passed, ${failed} failed`);

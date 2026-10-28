@@ -22,6 +22,8 @@
 
 In Antigravity, open Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`), search **Antigravity Remote** (publisher **dr-opensource**) and install. It is on [Open VSX](https://open-vsx.org/extension/dr-opensource/ag-remote) and the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=dr-opensource.ag-remote); a `.vsix` is attached to each [GitHub release](https://github.com/DrOpenSource/AG-Remote/releases).
 
+> **After installing or updating, reload every open Antigravity window**: `Ctrl+Shift+P` (`Cmd+Shift+P` on a Mac) → **Developer: Reload Window**, in each window. Or close and reopen Antigravity. Your phone talks to one window's copy of the extension, and a window that isn't reloaded keeps the old version.
+
 Then click **AG-Remote** in the status bar, or run `Antigravity Remote: Show Pairing QR Code` from the Command Palette.
 
 If you installed 0.1.0 (publisher `ag-remote`), uninstall it first; your paired phones stay paired.
@@ -37,6 +39,16 @@ If you installed 0.1.0 (publisher `ag-remote`), uninstall it first; your paired 
 3. **Install as App (PWA)**:
    - **iOS (Safari)**: Tap Share (`⬆️`) -> **Add to Home Screen**.
    - **Android (Chrome)**: Tap Menu (`⋮`) -> **Install app** or **Add to Home screen**.
+
+---
+
+### 3. If the phone shows no conversation
+
+1. **Reload every Antigravity window** (see above). This fixes it after almost every update.
+2. Make sure the project is open in Antigravity and has a chat in the Agent panel.
+3. Still nothing? In the window for that project, run `Antigravity Remote: Copy Diagnostics` and paste the report into an [issue](https://github.com/DrOpenSource/AG-Remote/issues). It contains no tokens or chat titles.
+
+Antigravity Remote works with both the older Antigravity agent (`language_server`) and the newer one from late October 2026 (`agy`, one per window), on Windows, macOS and Linux.
 
 ---
 

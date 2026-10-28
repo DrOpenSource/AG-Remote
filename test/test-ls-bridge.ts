@@ -280,15 +280,37 @@ async function run() {
   assert(conv?.body.interaction.permission.scope === 2, 'adapter maps allow_conversation to scope 2');
   assert((await adapter.getSnapshot()).pendingApproval === null, 'approval clears after the IDE accepts');
 
+  // The agy agent (Oct 2026) accepts the images field without error but the agent never sees it
+  // (owner's live test, 0.2.3-B3). So images always go into the project as files the agent can open.
+  const uploadsDir = path.join(brain, '.ag-remote', 'uploads');
+  const savedPaths = (text: string) => [...text.matchAll(/(\S+[\\/]\.ag-remote[\\/]uploads[\\/][\w-]+\.png)/g)].map(m => m[1]);
+  state.calls = [];
+  await adapter.sendPrompt('what is wrong here?', [{ mimeType: 'image/png', data: Buffer.from('png-bytes').toString('base64') }]);
+  const accepted = state.calls.filter(c => c.method === 'SendUserCascadeMessage');
+  const acceptedText = accepted[0]?.body.items?.[0]?.text || '';
+  const acceptedPath = savedPaths(acceptedText)[0];
+  assert(accepted.length === 1 && acceptedText.startsWith('what is wrong here?'), 'image prompt sent once, keeping the user\'s text first');
+  assert(!!acceptedPath && path.isAbsolute(acceptedPath), 'prompt names the saved image by its full path');
+  assert(!!acceptedPath && fs.readFileSync(acceptedPath, 'utf8') === 'png-bytes', 'image saved into the project with its exact bytes');
+  assert(accepted[0]?.body.images?.length === 1, 'the images field is still sent, for builds that support it');
+  assert(fs.readFileSync(path.join(brain, '.ag-remote', '.gitignore'), 'utf8').trim() === '*', 'upload folder ignores itself in git');
+
   state.rejectImages = true;
   state.calls = [];
-  await adapter.sendPrompt('look', [{ mimeType: 'image/png', data: Buffer.from('png-bytes').toString('base64') }]);
-  const fallback = state.calls.filter(c => c.method === 'SendUserCascadeMessage').pop();
-  const saved = /\.ag-remote\/uploads\/[\w-]+\.png/.exec(fallback?.body.items?.[0]?.text || '')?.[0];
-  assert(saved && fallback?.body.images === undefined, 'refused images are resent as a text prompt naming the saved file');
-  assert(saved && fs.readFileSync(path.join(brain, saved), 'utf8') === 'png-bytes', 'image saved into the workspace with its exact bytes');
-  assert(fs.readFileSync(path.join(brain, '.ag-remote', '.gitignore'), 'utf8').trim() === '*', 'upload folder ignores itself in git');
+  await adapter.sendPrompt('', [{ mimeType: 'image/png', data: Buffer.from('second').toString('base64') }]);
+  const retried = state.calls.filter(c => c.method === 'SendUserCascadeMessage');
+  const retryText = retried.pop()?.body.items?.[0]?.text || '';
+  assert(savedPaths(retryText).length === 1 && retried.pop()?.body.images?.length === 1, 'refused images field: resent without it, still naming the file');
+  assert(fs.readdirSync(uploadsDir).filter(f => f.endsWith('.png')).length === 2, 'each image saved once, even when resent');
   state.rejectImages = false;
+
+  // Uploads older than a week are removed when new ones are saved
+  const stale = path.join(uploadsDir, '1000000000000-1.png');
+  fs.writeFileSync(stale, 'old');
+  const weekAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+  fs.utimesSync(stale, weekAgo, weekAgo);
+  await adapter.sendPrompt('again', [{ mimeType: 'image/png', data: Buffer.from('third').toString('base64') }]);
+  assert(!fs.existsSync(stale), 'uploads older than 7 days are cleaned up');
   await adapter.disconnect();
 
   const offline = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });

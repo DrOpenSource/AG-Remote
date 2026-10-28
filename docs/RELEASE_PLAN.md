@@ -74,14 +74,14 @@ A version may not be released until every box here is ticked for it. Copy this l
 **Tests first**
 - [x] `0.2.3-T1` CI workflow runs `npm test` on Windows, macOS and Linux for every push and pull request (GitHub Actions is free for public repos). (#1, PR #18; it immediately caught two tests that only passed on the owner's PC because they read the real `~/.gemini` history.)
 - [x] `0.2.3-T2` Browser tests for the phone app with Playwright (dev-only, approved). 10 tests: pairing screen, project title, file-name chips, no HTML execution, approve, deny with note, prompt, attach tray, image compression, stop. (#2, PR #18)
-- [ ] `0.2.3-T3` Test: image prompt sent with the `media` field when the IDE rejects `images` (fake language server).
-- [ ] `0.2.3-T4` Test: setting `agRemote.imagesAsFiles` always sends images as saved files.
+- [x] `0.2.3-T3` (changed after B3) Tests: every phone image is saved into the project and named by full path in the prompt; the `images` field is still sent; if the IDE refuses it the prompt is resent without it and each image is saved once; uploads older than 7 days are removed.
+- [x] `0.2.3-T4` Dropped: no `imagesAsFiles` setting is needed, because files are now always used.
 
 **Build**
 - [x] `0.2.3-B1` `.github/workflows/test.yml`: 3 operating systems × Node 22 and 24, relay suite, browser tests, VSIX build with a 150 KB budget.
 - [x] `0.2.3-B2` Browser test harness (`test/browser/`, fake agent with a control API) and `npm run test:browser`.
-- [ ] `0.2.3-B3` Live check (👤 owner): send a screenshot, ask "what do you see?". Record the result in NOTES.md.
-- [ ] `0.2.3-B4` Only if B3 shows the agent ignores inline images: add the `media` fallback and the `imagesAsFiles` setting.
+- [x] `0.2.3-B3` Live check (owner, 2026-10-28, Windows, agy agent): the screenshot was sent with the `images` field, Antigravity accepted it without error, and the agent replied that no screenshot was attached. It did open image files from disk on its own. Result: the field is ignored.
+- [x] `0.2.3-B4` Images are always saved to `<project>/.ag-remote/uploads/` (git-ignored, cleaned after 7 days) and named in the prompt; the field is kept for builds that support it. Not a `media`-field experiment: files already work and need no guess about the protocol.
 
 **Manual checks for this version**
 - [ ] `0.2.3-V1` C13 on Windows and Mac, relay and Wi-Fi, text + image and image only.

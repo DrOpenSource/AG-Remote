@@ -4,7 +4,8 @@ name: Tests
 # on all three operating systems, the phone app in a browser, the relay, and a VSIX build.
 on:
   push:
-    branches: [main, 'v*/**', 'feat/**']
+    # Branches are tested through their pull request; pushing to main tests the merge result.
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

@@ -34,7 +34,7 @@
     "ag-remote": "./dist/cli.mjs"
   },
   "scripts": {
-    "build": "npx --yes esbuild src/extension/index.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --minify --legal-comments=none --outfile=dist/extension.cjs && npx --yes esbuild bin/ag-remote.mjs --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs && npm run build:pwa",
+    "build": "esbuild src/extension/index.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --minify --legal-comments=none --outfile=dist/extension.cjs && esbuild bin/ag-remote.mjs --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs && npm run build:pwa",
     "vscode:prepublish": "npm run build",
     "start": "node dist/cli.mjs",
     "start:dev": "node --experimental-strip-types bin/ag-remote.mjs",
@@ -47,18 +47,20 @@
     "test:audit": "node --env-file=test/test.env --experimental-strip-types test/test-production-audit.ts",
     "test:env": "node --env-file=test/test.env --experimental-strip-types test/test-environment-sentinel.ts",
     "probe": "node scripts/feasibility-probe.mjs",
-    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies",
+    "package": "npm run build && vsce package --no-dependencies",
     "test:ls": "node --env-file=test/test.env --experimental-strip-types test/test-ls-bridge.ts",
     "test:multi": "node --env-file=test/test.env --experimental-strip-types test/test-multi-window.ts",
     "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts",
     "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts",
-    "build:pwa": "npx --yes esbuild src/pwa/app.js src/pwa/e2e.js src/pwa/relay-link.js src/pwa/sw.js src/pwa/app.css --minify --legal-comments=none --outdir=dist/pwa && node -e \"for (const f of ['index.html', 'manifest.json']) require('fs').copyFileSync('src/pwa/' + f, 'dist/pwa/' + f)\""
+    "build:pwa": "esbuild src/pwa/app.js src/pwa/e2e.js src/pwa/relay-link.js src/pwa/sw.js src/pwa/app.css --minify --legal-comments=none --outdir=dist/pwa && node -e \"for (const f of ['index.html', 'manifest.json']) require('fs').copyFileSync('src/pwa/' + f, 'dist/pwa/' + f)\"",
+    "test:browser": "playwright test"
   },
   "bugs": {
     "url": "https://github.com/DrOpenSource/AG-Remote/issues"
   },
   "homepage": "https://github.com/DrOpenSource/AG-Remote#readme",
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.2"
   },

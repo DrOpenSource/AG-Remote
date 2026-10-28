@@ -24,3 +24,8 @@ bin/**
 assets/icon.svg
 dist/cli.mjs
 src/pwa/**
+.github/**
+playwright.config.ts
+package-lock.json
+test-results/**
+playwright-report/**

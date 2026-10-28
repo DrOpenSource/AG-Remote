@@ -1,0 +1,92 @@
+name: Tests
+
+# Release gate, "before building the VSIX": every push and pull request runs the full suite
+# on all three operating systems, the phone app in a browser, the relay, and a VSIX build.
+on:
+  push:
+    branches: [main, 'v*/**', 'feat/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit and integration (${{ matrix.os }}, Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  browser:
+    name: Phone app in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  relay:
+    name: Relay (local wrangler dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  package:
+    name: Build the VSIX
+    runs-on: ubuntu-latest
+    needs: [unit, browser]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run package
+      - name: Size budget (150 KB download)
+        run: |
+          size=$(stat -c %s ag-remote-*.vsix)
+          echo "VSIX size: $size bytes"
+          test "$size" -le 153600
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: ag-remote-*.vsix
+          retention-days: 14

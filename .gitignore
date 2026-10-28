@@ -15,3 +15,7 @@ Thumbs.db
 # wrangler local state
 .wrangler/
 .dev.vars
+
+# Playwright
+test-results/
+playwright-report/

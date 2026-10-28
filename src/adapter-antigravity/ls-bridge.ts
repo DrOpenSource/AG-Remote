@@ -177,6 +177,61 @@ export const discoverWindowsLanguageServers: Discover = async () => {
   }).filter(s => s.token && s.ports.length > 0);
 };
 
+/**
+ * Language-server processes from `ps -axww -o pid=,command=` output. The binary is
+ * language_server_macos_arm / _macos_x64 / _linux_x64 / etc.; the path may contain spaces
+ * (/Applications/Antigravity.app/...), so match the name anywhere before the flags. Pure; exported for tests.
+ */
+export function parsePsOutput(raw: string): Array<{ pid: number; workspaceId: string | null; token: string }> {
+  const out: Array<{ pid: number; workspaceId: string | null; token: string }> = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!m || !/(?:^|\/)language_server_[\w.-]+(\s|$)/.test(m[2])) continue;
+    const token = (/(?:^|\s)--csrf_token[= ]"?([^\s"]+)/.exec(m[2]) || [])[1] || '';
+    if (!token) continue;
+    const workspaceId = (/--workspace_id[= ]"?([^\s"]+)/.exec(m[2]) || [])[1] || null;
+    out.push({ pid: Number(m[1]), workspaceId, token });
+  }
+  return out;
+}
+
+/** Loopback TCP listening ports per pid, from `lsof -nP -iTCP -sTCP:LISTEN` or `ss -ltnpH` output. Pure; exported for tests. */
+export function parseListeningPorts(raw: string): Map<number, number[]> {
+  const ports = new Map<number, number[]>();
+  const add = (pid: number, port: number) => {
+    const list = ports.get(pid) || [];
+    if (!list.includes(port)) list.push(port);
+    ports.set(pid, list);
+  };
+  for (const line of raw.split(/\r?\n/)) {
+    // lsof: language_ 4242 me 12u IPv4 0x1 0t0 TCP 127.0.0.1:53111 (LISTEN)
+    const lsof = /^\S+\s+(\d+)\s.*\s(?:127\.0\.0\.1|localhost|\*):(\d+)\s+\(LISTEN\)/.exec(line);
+    if (lsof) { add(Number(lsof[1]), Number(lsof[2])); continue; }
+    // ss: LISTEN 0 4096 127.0.0.1:53111 0.0.0.0:* users:(("language_server",pid=4242,fd=9))
+    const ss = /\s(?:127\.0\.0\.1|\*|0\.0\.0\.0):(\d+)\s.*\bpid=(\d+)/.exec(line);
+    if (ss) add(Number(ss[2]), Number(ss[1]));
+  }
+  return ports;
+}
+
+/** Default discovery on macOS and Linux: ps for the processes, lsof (or ss) for their loopback ports. */
+export const discoverPosixLanguageServers: Discover = async () => {
+  const run = (cmd: string, args: string[]) => new Promise<string>(res =>
+    execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (_e, out) => res(String(out || ''))));
+  const procs = parsePsOutput(await run('ps', ['-axww', '-o', 'pid=,command=']));
+  if (procs.length === 0) return [];
+  const pids = procs.map(p => p.pid).join(',');
+  // GUI apps on macOS get PATH=/usr/bin:/bin:/usr/sbin:/sbin, but try the absolute path too.
+  let listen = await run('lsof', ['-nP', '-a', '-iTCP', '-sTCP:LISTEN', '-p', pids]);
+  if (!listen && process.platform === 'darwin') listen = await run('/usr/sbin/lsof', ['-nP', '-a', '-iTCP', '-sTCP:LISTEN', '-p', pids]);
+  if (!listen) listen = await run('ss', ['-ltnpH']);
+  const ports = parseListeningPorts(listen);
+  return procs.map(p => ({ ...p, ports: ports.get(p.pid) || [] })).filter(s => s.ports.length > 0);
+};
+
+export const discoverLanguageServers: Discover =
+  process.platform === 'win32' ? discoverWindowsLanguageServers : discoverPosixLanguageServers;
+
 interface Endpoint { server: LsServer; port: number; scheme: 'http' | 'https' }
 
 export class LsBridge {
@@ -188,7 +243,7 @@ export class LsBridge {
   private verifyTimeoutMs: number;
 
   constructor(opts: { discover?: Discover; timeoutMs?: number; discoveryCooldownMs?: number; verifyTimeoutMs?: number } = {}) {
-    this.discover = opts.discover || discoverWindowsLanguageServers;
+    this.discover = opts.discover || discoverLanguageServers;
     this.timeoutMs = opts.timeoutMs ?? 4000;
     this.discoveryCooldownMs = opts.discoveryCooldownMs ?? 10000;
     this.verifyTimeoutMs = opts.verifyTimeoutMs ?? 3000;

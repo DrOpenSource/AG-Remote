@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1: Mac and Linux support
+
+- **Works on macOS and Linux.** The extension could only find Antigravity's agent on Windows, so on a Mac the phone connected but could not see or control the agent. It now finds it on macOS and Linux too.
+
 ## 0.2.0: Any network, notifications and screenshots
 
 Your phone now reaches your PC from anywhere, not only on the same Wi-Fi. If you installed 0.1.0, uninstall it first: the publisher changed from `ag-remote` to `dr-opensource`, so VS Code sees this as a new extension. Your paired phones stay paired.

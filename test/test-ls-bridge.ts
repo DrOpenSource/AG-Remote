@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
@@ -118,6 +118,31 @@ async function run() {
   threw = false;
   try { buildInteraction({ ...p, kind: 'somethingNew' }, { allow: true, scope: 'once' }); } catch (_) { threw = true; }
   assert(threw, 'unknown interaction kinds are refused (fail closed)');
+
+  console.log('\n[Suite 1b] macOS / Linux discovery parsers');
+  const ps = [
+    '  301 /Applications/Antigravity.app/Contents/MacOS/Electron',
+    '  412 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --csrf_token 9f8e-tok --extension_server_port 53110',
+    '  413 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --csrf_token=ws-tok --workspace_id file_Users_me_proj',
+    '  500 grep language_server_macos_arm',
+    '  600 language_server_linux_x64 --csrf_token linux-tok'
+  ].join('\n');
+  const procs = parsePsOutput(ps);
+  assert(procs.length === 3, 'ps: finds language servers, skips the IDE and processes without a token');
+  assert(procs[0].pid === 412 && procs[0].token === '9f8e-tok' && procs[0].workspaceId === null, 'ps: path with spaces, token and no workspace id');
+  assert(procs[1].workspaceId === 'file_Users_me_proj' && procs[1].token === 'ws-tok', 'ps: --flag=value form and workspace id');
+  assert(procs[2].pid === 600, 'ps: bare binary name (Linux)');
+  const lsof = [
+    'COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
+    'language_ 412   me   12u  IPv4 0x8f1c2a3b4d5e6f70      0t0  TCP 127.0.0.1:53111 (LISTEN)',
+    'language_ 412   me   14u  IPv4 0x8f1c2a3b4d5e6f71      0t0  TCP 127.0.0.1:53112 (LISTEN)',
+    'language_ 413   me   12u  IPv6 0x8f1c2a3b4d5e6f72      0t0  TCP [::1]:53200 (LISTEN)'
+  ].join('\n');
+  const lsofPorts = parseListeningPorts(lsof);
+  assert(JSON.stringify(lsofPorts.get(412)) === '[53111,53112]', 'lsof: loopback ports per pid');
+  assert(!lsofPorts.has(413), 'lsof: IPv6-only listener skipped (bridge connects to 127.0.0.1)');
+  const ss = 'LISTEN 0      4096       127.0.0.1:41234      0.0.0.0:*    users:(("language_server",pid=600,fd=9))';
+  assert(JSON.stringify(parseListeningPorts(ss).get(600)) === '[41234]', 'ss: loopback port per pid (Linux without lsof)');
 
   console.log('\n[Suite 2] Bridge against fake server');
   state.calls = [];

@@ -1,28 +1,30 @@
-# AG-Remote: Phone Remote Control for Google Antigravity
+# Antigravity Remote: Phone Remote Control for Google Antigravity
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2011%20(x64)-informational.svg)]()
-[![Zero Runtime Dependencies](https://img.shields.io/badge/Dependencies-Zero-brightgreen.svg)]()
+[![Open VSX](https://img.shields.io/open-vsx/v/dr-opensource/ag-remote?label=Open%20VSX)](https://open-vsx.org/extension/dr-opensource/ag-remote)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/dr-opensource.ag-remote?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=dr-opensource.ag-remote)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational.svg)]()
 
 > Walk away from your desk without your Antigravity agent stalling on a permission prompt.
 
-**AG-Remote** transforms your phone into an out-of-band asynchronous control plane for Google Antigravity. Send prompts, approve terminal commands and file edits with one tap, stop runaway generation, and switch between IDE workspace windows from anywhere.
+**Antigravity Remote** turns your phone into a remote for the Google Antigravity agent. Approve or deny commands and file edits, send prompts and screenshots, stop a run, get notified when the agent needs you, and switch between project windows, from anywhere.
 
-Works out of the box on **any network** (cellular mobile data, remote Wi-Fi, or home LAN) with zero cloud accounts and strict **End-to-End Encryption** (WebCrypto P-256 ECDH + AES-256-GCM).
+- **Any network** (mobile data, someone else's Wi-Fi, or your home LAN), with no account and nothing to set up.
+- **End-to-end encrypted** (WebCrypto P-256 ECDH + AES-256-GCM). The relay forwards messages it cannot read.
+- **No debug flag.** You don't relaunch Antigravity with `--remote-debugging-port`; it talks to the agent the same way Antigravity's own panel does.
+- **Free and open source** (MIT). Windows, macOS and Linux. See the [roadmap](docs/ROADMAP.md).
 
 ---
 
 ## ⚡ Quick Start (< 2 Minutes)
 
-### 1. Install & Launch AG-Remote
+### 1. Install
 
-Install the extension directly in Google Antigravity IDE:
-1. Open the Extensions view (`Ctrl+Shift+X`).
-2. Click the `...` menu at the top-right -> **Install from VSIX...**.
-3. Select `ag-remote-0.2.0.vsix`. If you installed 0.1.0 before, uninstall it first (its publisher was `ag-remote`, now `dr-opensource`); your paired phones stay paired.
-4. Click the `$(radio-tower) AG-Remote` icon in the bottom status bar (or press `Ctrl+Shift+P` -> `Antigravity Remote: Show Pairing QR Code`).
+In Antigravity, open Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`), search **Antigravity Remote** (publisher **dr-opensource**) and install. It is on [Open VSX](https://open-vsx.org/extension/dr-opensource/ag-remote) and the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=dr-opensource.ag-remote); a `.vsix` is attached to each [GitHub release](https://github.com/DrOpenSource/AG-Remote/releases).
 
-*(Alternative: Run standalone in your terminal with `npm start`)*.
+Then click **AG-Remote** in the status bar, or run `Antigravity Remote: Show Pairing QR Code` from the Command Palette.
+
+If you installed 0.1.0 (publisher `ag-remote`), uninstall it first; your paired phones stay paired.
 
 ---
 
@@ -87,6 +89,7 @@ AG-Remote has permissions to approve terminal commands and file modifications. S
 - `Antigravity Remote: Manage Paired Phones` (`ag-remote.managePhones`)
 - `Antigravity Remote: Revoke All Pairings` (`ag-remote.revokePairings`)
 - `Antigravity Remote: Restart Server` (`ag-remote.restartServer`)
+- `Antigravity Remote: Copy Diagnostics` (`ag-remote.diagnostics`): copies a report (no tokens) when the phone shows no conversation
 
 ---
 
@@ -104,6 +107,12 @@ npm run build
 # Package production VSIX
 npm run package
 ```
+
+---
+
+## 🤝 Contributing
+
+Bug reports and ideas are welcome in [Issues](https://github.com/DrOpenSource/AG-Remote/issues). If the phone connects but shows no conversation, run `Antigravity Remote: Copy Diagnostics` and paste the report (it contains no tokens or chat titles). See the [roadmap](docs/ROADMAP.md) for what's planned.
 
 ---
 

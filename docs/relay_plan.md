@@ -29,11 +29,13 @@ User's phone (any network) ──── HTTPS ────┘
 ## Phases
 
 1. **Relay skeleton:** Worker + Durable Object passing messages between two test clients, deployed to `remote.taqnik.in` via Wrangler (owner logs in and approves DNS). **Done 2026-10-27.**
-2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/pwa/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 41/41, `cd relay; npm test` 37/37 locally and live. **Deployed 2026-10-27.**
+2. **E2E encryption + QR pairing**, with tests proving the relay never sees plaintext. Design below. **Built 2026-10-27:** `src/pwa/e2e.js` (`HostE2E`, `PhoneE2E`, `MemoryPhoneRegistry`), relay addressing in `relay/src/room.ts`; `npm run test:e2e` 45/45, `cd relay; npm test` 49/49 locally and live. **Deployed 2026-10-27.**
 3. **Extension relay transport** + transport setting; direct Wi-Fi unchanged. **Built 2026-10-27** (details in "Phase 3 as built" below).
-4. **Live test** from the owner's phone over mobile data (numbered steps + pass/fail table).
-5. **Public-release prep:** privacy note, limits, push notifications. Scope depends on how public the owner wants to go.
-   - **Known issue (deferred by the owner 2026-10-27):** `GET /pair/view` on the Wi-Fi server is unauthenticated and mints a fresh PIN for anyone on the same network (server binds 0.0.0.0), who could then pair and control the agent. Fix: allow loopback callers only (it is only opened as `localhost` by linked windows). Document it in the README until fixed.
+4. **Live test** from the owner's phone over mobile data: **PASSED (2026-10-28)**.
+5. **Push Notifications & Hardening**:
+   - **Web Push Notifications**: Implemented in `src/relay-host/web-push.ts` and committed in `e6bb952`. 14 push tests passing.
+   - **Security fix (`GET /pair/view`)**: Resolved (2026-10-28). `GET /pair/view` is now strictly restricted to loopback callers (`127.0.0.1` / `::1`) with origin filtering, preventing unauthorized PIN minting across the local Wi-Fi.
+   - **VSIX Build Bundler**: Integrated `esbuild` to compile extension into standalone `dist/extension.cjs` and CLI into `dist/cli.mjs`. Packaged via `@vscode/vsce package` (108 KB bundle, 14 files, 0 runtime dependencies).
 
 ## Phase 2 design: E2E encryption + pairing (drafted 2026-10-27)
 

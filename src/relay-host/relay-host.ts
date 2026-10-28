@@ -40,8 +40,8 @@ export class RelayHost {
   private backoff = 1000;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
-  /** Phones that said their app is on screen; they get no push, they already see it. */
-  private visiblePeers = new Set<string>();
+  /** Phones that said their app is on screen; they get no push, they already see it. Stored with last-seen timestamp to expire stale visibility. */
+  private visiblePeers = new Map<string, number>();
   /** Last status per IDE window ('' without multi-window), to spot a task finishing. */
   private lastStatus = new Map<string, string>();
   private readonly onEvent = (event: AdapterEvent) => {
@@ -115,7 +115,14 @@ export class RelayHost {
       send: (text: string) => {
         if (this.ws?.readyState === 1) this.ws.send(text);
       },
-      onMessage: (peerId: string, msg: any, phone?: PhoneRecord) => this.handleRequest(peerId, msg, phone),
+      onMessage: (peerId: string, msg: any, phone?: PhoneRecord) => {
+        if (this.visiblePeers.has(peerId)) this.visiblePeers.set(peerId, Date.now());
+        this.handleRequest(peerId, msg, phone);
+      },
+      onVisible: (peerId: string, visible: boolean) => {
+        if (visible) this.visiblePeers.set(peerId, Date.now());
+        else this.visiblePeers.delete(peerId);
+      },
       onPhoneGone: (peerId: string) => this.visiblePeers.delete(peerId),
       onPaired: (phone: PhoneRecord) => this.opts.onPaired?.(phone)
     });
@@ -213,7 +220,7 @@ export class RelayHost {
     if (!phone) return { status: 403, body: { error: 'Unknown phone' } };
     if (pathname === '/api/push/key') return { status: 200, body: { key: this.opts.store.vapid.publicKey } };
     if (pathname === '/api/push/visible') {
-      if (body?.visible) this.visiblePeers.add(peerId);
+      if (body?.visible) this.visiblePeers.set(peerId, Date.now());
       else this.visiblePeers.delete(peerId);
       return { status: 200, body: { ok: true } };
     }
@@ -241,7 +248,16 @@ export class RelayHost {
       if (event.status === 'idle' && (before === 'generating' || before === 'awaiting_approval')) kind = 'done';
     }
     if (!kind) return;
-    const watching = new Set(this.e2e.readyPeers().filter((p) => this.visiblePeers.has(p.peerId)).map((p) => p.pub));
+    const now = Date.now();
+    const VISIBILITY_TTL_MS = 15000;
+    const watching = new Set(
+      this.e2e.readyPeers()
+        .filter((p) => {
+          const lastSeen = this.visiblePeers.get(p.peerId);
+          return lastSeen !== undefined && (now - lastSeen) < VISIBILITY_TTL_MS;
+        })
+        .map((p) => p.pub)
+    );
     const ws = event.windowId
       ? this.opts.sessionManager.registry.getAll().find((w) => w.windowId === event.windowId)?.workspaceName || ''
       : '';

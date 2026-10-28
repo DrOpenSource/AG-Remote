@@ -10,17 +10,31 @@
     "vscode": "^1.80.0"
   },
   "categories": [
+    "AI",
+    "Machine Learning",
     "Other"
+  ],
+  "keywords": [
+    "antigravity",
+    "gemini",
+    "remote",
+    "phone",
+    "companion",
+    "agent",
+    "approval"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./src/extension/index.ts",
+  "main": "./dist/extension.cjs",
   "bin": {
-    "ag-remote": "./bin/ag-remote.mjs"
+    "ag-remote": "./dist/cli.mjs"
   },
   "scripts": {
-    "start": "node --experimental-strip-types bin/ag-remote.mjs",
+    "build": "npx --yes esbuild src/extension/index.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.cjs && npx --yes esbuild bin/ag-remote.mjs --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs",
+    "vscode:prepublish": "npm run build",
+    "start": "node dist/cli.mjs",
+    "start:dev": "node --experimental-strip-types bin/ag-remote.mjs",
     "test": "npm run test:ls && npm run test:multi && npm run test:adapter && npm run test:server && npm run test:hub && npm run test:pwa && npm run test:pairing && npm run test:audit && npm run test:env && npm run test:e2e && npm run test:relay-host",
     "test:adapter": "node --env-file=test/test.env --experimental-strip-types test/test-adapter.ts",
     "test:server": "node --env-file=test/test.env --experimental-strip-types test/test-server.ts",
@@ -30,11 +44,19 @@
     "test:audit": "node --env-file=test/test.env --experimental-strip-types test/test-production-audit.ts",
     "test:env": "node --env-file=test/test.env --experimental-strip-types test/test-environment-sentinel.ts",
     "probe": "node scripts/feasibility-probe.mjs",
-    "package": "npx --yes @vscode/vsce package --no-dependencies",
+    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies",
     "test:ls": "node --env-file=test/test.env --experimental-strip-types test/test-ls-bridge.ts",
     "test:multi": "node --env-file=test/test.env --experimental-strip-types test/test-multi-window.ts",
     "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts",
     "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts"
+  },
+  "bugs": {
+    "url": "https://github.com/DrOpenSource/AG-Remote/issues"
+  },
+  "homepage": "https://github.com/DrOpenSource/AG-Remote#readme",
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.28.2"
   },
   "contributes": {
     "commands": [

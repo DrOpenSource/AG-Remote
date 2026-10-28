@@ -28,17 +28,22 @@ export interface HostControl {
   unpairAll?: () => Promise<boolean>;
 }
 
+export function isLoopbackAddress(ip: string): boolean {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 export function resolvePwaDirectory(explicitDir?: string): string {
   const candidates: string[] = [];
   if (explicitDir) {
     candidates.push(explicitDir);
   }
 
-  // 1. Relative to this source file: src/server/http-server.ts -> ../pwa
+  // 1. Relative to this source file: src/server/http-server.ts -> ../pwa or dist/extension.cjs -> ../src/pwa
   try {
-    const currentFilePath = fileURLToPath(import.meta.url);
+    const currentFilePath = typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url);
     const serverDir = path.dirname(currentFilePath);
     candidates.push(path.resolve(serverDir, '..', 'pwa'));
+    candidates.push(path.resolve(serverDir, '..', 'src', 'pwa'));
   } catch (_) {}
 
   // 2. Relative to process.cwd()
@@ -178,8 +183,14 @@ export class RemoteServer {
         return;
       }
 
-      // Endpoint: GET /pair/view (Browser visual pairing page on PC)
+      // Endpoint: GET /pair/view (Browser visual pairing page on PC - loopback only)
       if (req.method === 'GET' && url.pathname === '/pair/view') {
+        if (!isLoopbackAddress(clientIp) || req.headers.origin) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Forbidden: Pairing view is only accessible from this PC (loopback)' }));
+          return;
+        }
+
         const code = this.sessionManager.auth.generatePairingCode();
         const hostHeader = req.headers.host || `127.0.0.1:${this.port}`;
         // Resolve LAN IP if host is localhost
@@ -298,7 +309,7 @@ export class RemoteServer {
 
       // Hub endpoints: Allow loopback callers or valid auth token
       if (url.pathname.startsWith('/api/hub/')) {
-        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === '::ffff:127.0.0.1';
+        const isLoopback = isLoopbackAddress(clientIp);
         const authHeader = req.headers['authorization'];
         let token: string | undefined;
         if (authHeader && authHeader.startsWith('Bearer ')) {

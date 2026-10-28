@@ -1,4 +1,5 @@
 .git/**
+.gitignore
 .logs/**
 test/**
 .vscode/**
@@ -6,3 +7,17 @@ test/**
 .env
 .env.*
 relay/**
+docs/**
+scripts/**
+tsconfig.json
+AGENT.md
+NOTES.md
+session_handover_notes.md
+TRACKER.md
+src/adapter-antigravity/**
+src/core/**
+src/extension/**
+src/pairing/**
+src/relay-host/**
+src/server/**
+bin/**

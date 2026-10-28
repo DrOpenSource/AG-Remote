@@ -311,6 +311,7 @@ export class HostE2E {
     this.onPhoneReady = opts.onPhoneReady || (() => {});
     this.onPhoneGone = opts.onPhoneGone || (() => {});
     this.onPaired = opts.onPaired || (() => {});
+    this.onVisible = opts.onVisible || (() => {});
     this.now = opts.now || Date.now;
     this.peers = new Map(); // relay peer id -> { pub, channel, ready, sendQ }
     this.inQ = new Map(); // relay peer id -> serial queue for incoming
@@ -345,6 +346,7 @@ export class HostE2E {
   async receive(peerId, d) {
     const msg = parse(d);
     if (!msg) return;
+    if (msg.t === 'vis') return this.onVisible(peerId, !!msg.v);
     if (msg.t === 'pair') return this.handlePair(peerId, msg);
     if (msg.t === 'hello') return this.handleHello(peerId, msg);
     if (msg.t === 'enc') return this.handleEnc(peerId, msg);

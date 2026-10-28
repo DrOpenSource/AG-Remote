@@ -80,6 +80,7 @@ export type PushResult = 'sent' | 'gone' | 'failed';
 /** Sends one notification. 'gone' means the phone dropped the subscription and it should be forgotten. */
 export async function sendPush(sub: PushSub, payload: object, vapid: VapidKeys, subject: string, ttlSeconds = 3600): Promise<PushResult> {
   try {
+    const topic = (payload as any)?.kind === 'done' ? 'ag-done' : 'ag-approval';
     const res = await fetch(sub.endpoint, {
       method: 'POST',
       headers: {
@@ -87,6 +88,7 @@ export async function sendPush(sub: PushSub, payload: object, vapid: VapidKeys, 
         'Content-Type': 'application/octet-stream',
         TTL: String(ttlSeconds),
         Urgency: 'high',
+        Topic: topic,
         Authorization: vapidAuthorization(sub.endpoint, vapid, subject)
       },
       body: encryptPayload(sub, Buffer.from(JSON.stringify(payload)))

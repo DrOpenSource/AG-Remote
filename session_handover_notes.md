@@ -21,13 +21,16 @@
 3. RPC names and request fields can be read from `%LOCALAPPDATA%/Programs/Antigravity/resources/bin/language_server.exe` with `grep -aoE` (e.g. `grep -aoE "\*StartCascadeRequest\)\.Get[A-Za-z]+" language_server.exe | sort -u`). The JS bundles don't contain them.
 4. Claude Code sessions are not reachable by AG-Remote; use Claude Code's Remote Control.
 
-## 3. Next work: v0.2 hosted relay (agreed 2026-10-27, not started)
-- **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `remote.taqnik.in` (owner's domain, Cloudflare DNS, deploy with `npx wrangler`). The extension and phone both connect outbound, so it works on any network and for any user. End-to-end encrypted with a key in the QR's `#fragment`. Direct Wi-Fi mode stays.
-- Start with Phase 1 (relay skeleton) on branch `feat/relay`. The owner logs in to Wrangler and approves DNS changes. Subdomain confirmed: `remote.taqnik.in`.
-- **Phase 1 done (2026-10-27):** `relay/` (Worker + `Room` DO) deployed to `https://remote.taqnik.in` on the Workers Free plan (Wrangler logged in as the owner's account). `cd relay; npm test` = 26/26 locally and with `RELAY_URL=https://remote.taqnik.in`. Protocol is in the header comment of `relay/src/room.ts`.
-- **Phase 2 built (2026-10-27):** E2E module `src/pwa/e2e.js` + relay addressing (`{"from"}` / `{"to"}`). Design and deviations: docs/relay_plan.md "Phase 2 design". Tests: `npm run test:e2e` (in-memory relay, attacker cases) and `cd relay; npm test` section [6] (real relay). Relay redeployed and 37/37 live (2026-10-27). 
-- **Phase 3 built (2026-10-27):** extension relay transport, phone app relay mode, Worker serves the app at `/p/<room>`. See docs/relay_plan.md "Phase 3 as built". Committed bbf0aa3, relay deployed; live: relay suite 49/49, headless-Edge over https 14/14 (incl. home-screen "/" reopen). Next: Phase 4 live test by the owner on mobile data.
-- This is the paid-release track; keep it separate from personal-tool fixes.
+## 3. v0.2 hosted relay & marketplace release (updated 2026-10-28)
+- **Plan: [docs/relay_plan.md](docs/relay_plan.md).** Cloudflare Worker + Durable Object at `remote.taqnik.in` (owner's domain, Cloudflare DNS, deployed with `npx wrangler`). E2E encrypted with a key in the QR's `#fragment`.
+- **Phase 1-3 deployed (2026-10-27):** Worker + `Room` DO live, `src/pwa/e2e.js` WebCrypto E2E encryption, extension relay transport, and dual-mode settings.
+- **Phase 4 live test PASSED (2026-10-28):** Owner confirmed live test over cellular mobile data passed end-to-end.
+- **Phase 5 Web Push notifications (2026-10-28):** Implemented in `src/relay-host/web-push.ts` and committed in `e6bb952`. Alerts phone when agent waits for approval or finishes turn.
+- **Security fix (2026-10-28):** `GET /pair/view` restricted strictly to loopback callers (`127.0.0.1` / `::1`) with cross-site Origin rejection. Verified in `test:server`.
+- **Production VSIX Build Bundler (2026-10-28):** Added `esbuild` bundler generating standalone CommonJS `dist/extension.cjs` and CLI `dist/cli.mjs`. Updated `.vscodeignore` to exclude source TS and internal notes. Packaged bundle is 109 KB (14 files, 0 runtime dependencies). Ready for marketplace release.
+- **Background Notification & Wake Reconnect Fix (2026-10-28):**
+  - *Root Cause 1 (Notification Delay)*: Mobile OS throttles async WebCrypto encryption when backgrounding, dropping the encrypted `{ visible: false }` API call and causing the host to keep suppressing push for 30–60s until DO socket timeout. Fixed with synchronous unencrypted presence frame `{ t: 'vis', v: boolean }`, 15s auto-expiring `visiblePeers` map, and Web Push `Topic` header.
+  - *Root Cause 2 (Reopen Offline / Lag)*: OS puts socket to sleep without FIN; browser keeps `readyState === 1`, causing `ensureConnected()` to skip reconnect and stall on dead socket until browser timeout + exponential backoff. Fixed with `wake()` on `RelayLink`, 10s socket liveness check, immediate backoff reset to 1000ms, emergency 1.5s visible backoff clamp, and `pageshow`/`focus`/`freeze` lifecycle listeners.
 
 ## 4. Working agreements and gotchas
 - The auto-mode classifier blocks me from reading process command lines/credentials. Such code runs in the extension, triggered by the owner.

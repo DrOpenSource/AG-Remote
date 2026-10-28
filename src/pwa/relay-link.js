@@ -83,6 +83,7 @@ export class RelayLink {
     this.reconnectTimer = null;
     this.pingTimer = null;
     this.working = false; // pairing or handshaking right now
+    this.lastActivity = Date.now();
   }
 
   async start() {
@@ -98,19 +99,49 @@ export class RelayLink {
     return this.state === 'ready';
   }
 
-  /** Reconnects now if the socket dropped (e.g. the phone slept). */
-  ensureConnected() {
+  /** Synchronous presence frame to host, unencrypted for zero delay on sleep/background. */
+  reportVisible(visible) {
+    if (this.ws && this.ws.readyState === 1) {
+      try {
+        this.ws.send(JSON.stringify({ t: 'vis', v: !!visible }));
+      } catch (_) {}
+    }
+  }
+
+  /**
+   * Reconnects immediately if the socket dropped, was suspended by OS sleep, or has gone stale.
+   * Eliminates the multi-second delay when returning to the PWA.
+   */
+  wake() {
     if (this.state === 'unpaired' || this.state === 'room-full') return;
-    if (!this.ws || this.ws.readyState > 1) {
+    const now = Date.now();
+    const isStale = !this.ws || this.ws.readyState !== 1 || (now - this.lastActivity > 10000);
+    if (isStale) {
+      if (this.ws) {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        try { this.ws.close(); } catch (_) {}
+        this.ws = null;
+      }
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+      this.backoff = 1000;
       this.connect();
+    } else {
+      try { this.ws.send('ping'); } catch (_) {}
     }
+  }
+
+  /** Reconnects now if the socket dropped (e.g. the phone slept). */
+  ensureConnected() {
+    this.wake();
   }
 
   /** Same shape the app gets from fetch: { ok, status, data }. Throws when the laptop is unreachable. */
   request(method, path, body) {
     if (!this.isReady()) return Promise.reject(new Error('not-connected'));
+    this.lastActivity = Date.now();
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -152,12 +183,15 @@ export class RelayLink {
       : null;
 
     ws.onopen = () => {
+      this.lastActivity = Date.now();
       this.backoff = 1000;
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => ws.readyState === 1 && ws.send('ping'), PING_MS);
     };
     ws.onmessage = (e) => {
-      if (this.ws !== ws || typeof e.data !== 'string' || e.data === 'pong') return;
+      if (this.ws !== ws || typeof e.data !== 'string') return;
+      this.lastActivity = Date.now();
+      if (e.data === 'pong') return;
       let msg = null;
       try {
         msg = JSON.parse(e.data);
@@ -175,7 +209,9 @@ export class RelayLink {
       }
       if (this.state === 'unpaired') return;
       this.setState('offline');
-      this.reconnectTimer = setTimeout(() => this.connect(), this.backoff);
+      const isVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
+      const delay = isVisible ? Math.min(this.backoff, 1500) : this.backoff;
+      this.reconnectTimer = setTimeout(() => this.connect(), delay);
       this.backoff = Math.min(this.backoff * 2, 15000);
     };
   }

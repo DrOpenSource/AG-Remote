@@ -205,13 +205,42 @@
     btnNotify.setAttribute('aria-label', on ? 'Notifications are on' : 'Turn on notifications');
   }
 
+  let visibilityHeartbeatTimer = null;
+
   function reportVisibility() {
-    if (relay && relay.isReady()) api('POST', '/api/push/visible', { visible: document.visibilityState === 'visible' }).catch(() => {});
+    const isVis = document.visibilityState === 'visible';
+    if (relayMode && relay) {
+      relay.reportVisible(isVis);
+    }
+    if (relay && relay.isReady()) {
+      api('POST', '/api/push/visible', { visible: isVis }).catch(() => {});
+    }
+  }
+
+  function startVisibilityHeartbeat() {
+    stopVisibilityHeartbeat();
+    if (document.visibilityState === 'visible') {
+      reportVisibility();
+      visibilityHeartbeatTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          reportVisibility();
+        } else {
+          stopVisibilityHeartbeat();
+        }
+      }, 8000);
+    }
+  }
+
+  function stopVisibilityHeartbeat() {
+    if (visibilityHeartbeatTimer) {
+      clearInterval(visibilityHeartbeatTimer);
+      visibilityHeartbeatTimer = null;
+    }
   }
 
   /** Each connect: tell the PC whether we're on screen, and re-send our subscription in case it lost it. */
   async function pushOnReady() {
-    reportVisibility();
+    startVisibilityHeartbeat();
     try {
       const sub = Notification.permission === 'granted' ? await currentPushSubscription() : null;
       setBell(!!sub);
@@ -1125,26 +1154,40 @@
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
+  function handleAppWake() {
+    if (relayMode && relay) {
+      relay.wake();
+    } else if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectWebSocket();
+    }
+    resyncState();
+    startVisibilityHeartbeat();
+  }
+
+  function handleAppSleep() {
+    stopVisibilityHeartbeat();
+    reportVisibility();
+  }
+
   // Auto-resync when phone wakes up or tab returns to view (Requirement F7: < 3s resync)
   document.addEventListener('visibilitychange', () => {
-    if (relayMode) reportVisibility();
     if (document.visibilityState === 'visible') {
-      resyncState();
-      if (relayMode || !ws || ws.readyState !== WebSocket.OPEN) {
-        connectWebSocket();
-      }
+      handleAppWake();
+    } else {
+      handleAppSleep();
     }
   });
+
+  window.addEventListener('pageshow', handleAppWake);
+  window.addEventListener('focus', handleAppWake);
+  window.addEventListener('online', handleAppWake);
+  window.addEventListener('pagehide', handleAppSleep);
+  window.addEventListener('freeze', handleAppSleep);
 
   // A fresh relay QR opened while this page is already showing the room only changes the #fragment,
   // which doesn't reload the page. Start over so the new secret is used.
   window.addEventListener('hashchange', () => {
     if (relayMode && window.location.hash.length > 1) window.location.reload();
-  });
-
-  window.addEventListener('online', () => {
-    resyncState();
-    connectWebSocket();
   });
 
   // 7. Register Service Worker for PWA (Requirement F9)

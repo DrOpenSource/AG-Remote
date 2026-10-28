@@ -148,7 +148,7 @@ async function makePhone(net: FakeNet, room: string, hostPub: string | null = nu
     await until(() => got.some((m) => m.k === 'res' && m.id === id));
     return got.find((m) => m.k === 'res' && m.id === id);
   };
-  return { phone, got, rejects, request, id: link.id };
+  return { phone, got, rejects, request, id: link.id, send: link.send };
 }
 
 function parsePairUrl(url: string) {
@@ -258,6 +258,15 @@ async function runTests() {
   await until(() => pushes.length === 1);
   assert(pushes[0]?.endpoint === endpoint && pushes[0].payload.kind === 'approval' && pushes[0].payload.url === `/p/${relayStore.room}`, 'approval needed: push sent when the app is in the background');
   assert(!JSON.stringify(pushes[0].payload).includes('ap2'), 'push payload carries no approval details');
+
+  // Unencrypted presence frame (zero latency / background sleep safeguard)
+  a.send(JSON.stringify({ t: 'vis', v: true }));
+  await sleep(20);
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap-vis-1' } } as any);
+  await sleep(100);
+  assert(pushes.length === 1, 'unencrypted vis:true frame suppresses push without async encryption delay');
+  a.send(JSON.stringify({ t: 'vis', v: false }));
+  await sleep(20);
   sm.emit('adapter_event', { type: 'status_changed', status: 'generating' } as any);
   sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
   await until(() => pushes.length === 2);

@@ -22,4 +22,5 @@ src/relay-host/**
 src/server/**
 bin/**
 assets/icon.svg
-
+dist/cli.mjs
+src/pwa/**

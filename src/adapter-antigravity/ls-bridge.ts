@@ -177,22 +177,36 @@ export const discoverWindowsLanguageServers: Discover = async () => {
   }).filter(s => s.token && s.ports.length > 0);
 };
 
+export interface PosixLsProcess { pid: number; ppid: number; workspaceId: string | null; token: string; attached: boolean }
+
 /**
- * Language-server processes from `ps -axww -o pid=,command=` output. The binary is
+ * Language-server processes from `ps -axww -o pid=,ppid=,command=` output. The binary is
  * language_server_macos_arm / _macos_x64 / _linux_x64 / etc.; the path may contain spaces
- * (/Applications/Antigravity.app/...), so match the name anywhere before the flags. Pure; exported for tests.
+ * (/Applications/Antigravity IDE.app/...), so match the name anywhere before the flags. Pure; exported for tests.
  */
-export function parsePsOutput(raw: string): Array<{ pid: number; workspaceId: string | null; token: string }> {
-  const out: Array<{ pid: number; workspaceId: string | null; token: string }> = [];
+export function parsePsOutput(raw: string): PosixLsProcess[] {
+  const out: PosixLsProcess[] = [];
   for (const line of raw.split(/\r?\n/)) {
-    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (!m || !/(?:^|\/)language_server_[\w.-]+(\s|$)/.test(m[2])) continue;
-    const token = (/(?:^|\s)--csrf_token[= ]"?([^\s"]+)/.exec(m[2]) || [])[1] || '';
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!m || !/(?:^|\/)language_server_[\w.-]+(\s|$)/.test(m[3])) continue;
+    const cmd = m[3];
+    const token = (/(?:^|\s)--csrf_token[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || '';
     if (!token) continue;
-    const workspaceId = (/--workspace_id[= ]"?([^\s"]+)/.exec(m[2]) || [])[1] || null;
-    out.push({ pid: Number(m[1]), workspaceId, token });
+    const workspaceId = (/--workspace_id[= ]"?([^\s"]+)/.exec(cmd) || [])[1] || null;
+    out.push({ pid: Number(m[1]), ppid: Number(m[2]), workspaceId, token, attached: /\s--parent_pipe_path[= ]/.test(cmd) });
   }
   return out;
+}
+
+/**
+ * A Mac can run more than one workspace-less server: seen 2026-10-28, a leftover one without
+ * --parent_pipe_path next to the live one. Order candidates so the live one is tried first:
+ * attached to a running IDE (--parent_pipe_path) first, orphans (re-parented to launchd/init, ppid 1) last.
+ * Pure; exported for tests.
+ */
+export function rankLanguageServers<T extends Pick<PosixLsProcess, 'ppid' | 'attached'>>(procs: T[]): T[] {
+  const score = (p: T) => (p.attached ? 2 : 0) + (p.ppid === 1 ? -1 : 0);
+  return procs.map((p, i) => ({ p, i })).sort((a, b) => score(b.p) - score(a.p) || a.i - b.i).map(x => x.p);
 }
 
 /** Loopback TCP listening ports per pid, from `lsof -nP -iTCP -sTCP:LISTEN` or `ss -ltnpH` output. Pure; exported for tests. */
@@ -218,7 +232,7 @@ export function parseListeningPorts(raw: string): Map<number, number[]> {
 export const discoverPosixLanguageServers: Discover = async () => {
   const run = (cmd: string, args: string[]) => new Promise<string>(res =>
     execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (_e, out) => res(String(out || ''))));
-  const procs = parsePsOutput(await run('ps', ['-axww', '-o', 'pid=,command=']));
+  const procs = rankLanguageServers(parsePsOutput(await run('ps', ['-axww', '-o', 'pid=,ppid=,command='])));
   if (procs.length === 0) return [];
   const pids = procs.map(p => p.pid).join(',');
   // GUI apps on macOS get PATH=/usr/bin:/bin:/usr/sbin:/sbin, but try the absolute path too.
@@ -251,6 +265,11 @@ export class LsBridge {
 
   public isConnected(): boolean {
     return this.endpoint !== null;
+  }
+
+  /** The server this bridge talks to, without its token (for diagnostics). */
+  public describeEndpoint(): { pid: number; port: number; scheme: string } | null {
+    return this.endpoint ? { pid: this.endpoint.server.pid, port: this.endpoint.port, scheme: this.endpoint.scheme } : null;
   }
 
   public async getTrajectory(cascadeId: string): Promise<any | null> {

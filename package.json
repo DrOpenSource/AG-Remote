@@ -2,7 +2,7 @@
   "name": "ag-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your Antigravity agent from your phone: approve or deny commands, send prompts and screenshots, stop runs and get notified, on any network with end-to-end encryption.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "dr-opensource",
   "icon": "assets/icon.png",
   "author": "Dr. Shubham Kashyap",
@@ -34,7 +34,7 @@
     "ag-remote": "./dist/cli.mjs"
   },
   "scripts": {
-    "build": "npx --yes esbuild src/extension/index.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.cjs && npx --yes esbuild bin/ag-remote.mjs --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs",
+    "build": "npx --yes esbuild src/extension/index.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --minify --legal-comments=none --outfile=dist/extension.cjs && npx --yes esbuild bin/ag-remote.mjs --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.mjs && npm run build:pwa",
     "vscode:prepublish": "npm run build",
     "start": "node dist/cli.mjs",
     "start:dev": "node --experimental-strip-types bin/ag-remote.mjs",
@@ -51,7 +51,8 @@
     "test:ls": "node --env-file=test/test.env --experimental-strip-types test/test-ls-bridge.ts",
     "test:multi": "node --env-file=test/test.env --experimental-strip-types test/test-multi-window.ts",
     "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts",
-    "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts"
+    "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts",
+    "build:pwa": "npx --yes esbuild src/pwa/app.js src/pwa/e2e.js src/pwa/relay-link.js src/pwa/sw.js src/pwa/app.css --minify --legal-comments=none --outdir=dist/pwa && node -e \"for (const f of ['index.html', 'manifest.json']) require('fs').copyFileSync('src/pwa/' + f, 'dist/pwa/' + f)\""
   },
   "bugs": {
     "url": "https://github.com/DrOpenSource/AG-Remote/issues"
@@ -79,6 +80,10 @@
       {
         "command": "ag-remote.restartServer",
         "title": "Antigravity Remote: Restart Server"
+      },
+      {
+        "command": "ag-remote.diagnostics",
+        "title": "Antigravity Remote: Copy Diagnostics"
       }
     ],
     "configuration": {

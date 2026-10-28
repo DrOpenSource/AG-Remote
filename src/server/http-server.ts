@@ -50,12 +50,6 @@ export function resolvePwaDirectory(explicitDir?: string): string {
   candidates.push(path.join(process.cwd(), 'src', 'pwa'));
   candidates.push(path.join(process.cwd(), 'extension', 'src', 'pwa'));
 
-  // 3. Known extension directory in Antigravity IDE
-  const home = process.env.USERPROFILE || process.env.HOME || '';
-  if (home) {
-    candidates.push(path.join(home, '.antigravity-ide', 'extensions', 'ag-remote.ag-remote-0.1.0', 'src', 'pwa'));
-  }
-
   for (const dir of candidates) {
     try {
       if (fs.existsSync(path.join(dir, 'index.html'))) {

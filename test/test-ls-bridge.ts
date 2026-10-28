@@ -6,10 +6,11 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, rankLanguageServers, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
+import { collectDiagnostics } from '../src/adapter-antigravity/diagnostics.ts';
 
 let passed = 0;
 let failed = 0;
@@ -120,27 +121,36 @@ async function run() {
   assert(threw, 'unknown interaction kinds are refused (fail closed)');
 
   console.log('\n[Suite 1b] macOS / Linux discovery parsers');
+  // Shapes from a real macOS machine (2026-10-28), tokens replaced
+  const BIN = '/Applications/Antigravity IDE.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm';
   const ps = [
-    '  301 /Applications/Antigravity.app/Contents/MacOS/Electron',
-    '  412 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --csrf_token 9f8e-tok --extension_server_port 53110',
-    '  413 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --csrf_token=ws-tok --workspace_id file_Users_me_proj',
-    '  500 grep language_server_macos_arm',
-    '  600 language_server_linux_x64 --csrf_token linux-tok'
+    '  301     1 /Applications/Antigravity IDE.app/Contents/MacOS/Electron',
+    ` 2084     1 ${BIN} --csrf_token=stale-tok --extension_server_port 49276 --app_data_dir antigravity-ide --subclient_type ide --cloud_code_endpoint https://cloudcode-pa.googleapis.com`,
+    ` 4043   350 ${BIN} --enable_lsp --csrf_token=live-tok --extension_server_port 58994 --subclient_type ide --app_data_dir antigravity-ide --parent_pipe_path /var/folders/9g/T/server_938c`,
+    `60612   351 ${BIN} --enable_lsp --csrf_token=ws-tok --workspace_id file_Volumes_External_proj --app_data_dir antigravity-ide --parent_pipe_path /var/folders/9g/T/server_c40a`,
+    '92607   400 grep language_server',
+    '  600     1 language_server_linux_x64 --csrf_token linux-tok'
   ].join('\n');
   const procs = parsePsOutput(ps);
-  assert(procs.length === 3, 'ps: finds language servers, skips the IDE and processes without a token');
-  assert(procs[0].pid === 412 && procs[0].token === '9f8e-tok' && procs[0].workspaceId === null, 'ps: path with spaces, token and no workspace id');
-  assert(procs[1].workspaceId === 'file_Users_me_proj' && procs[1].token === 'ws-tok', 'ps: --flag=value form and workspace id');
-  assert(procs[2].pid === 600, 'ps: bare binary name (Linux)');
+  assert(procs.length === 4, 'ps: finds language servers, skips the IDE and processes without a token');
+  assert(procs[0].pid === 2084 && procs[0].token === 'stale-tok' && procs[0].workspaceId === null && procs[0].ppid === 1, 'ps: path with spaces, --csrf_token=, no workspace id, parent pid');
+  assert(procs[1].attached && !procs[0].attached, 'ps: --parent_pipe_path marks a server attached to a running IDE');
+  assert(procs[2].workspaceId === 'file_Volumes_External_proj' && procs[2].token === 'ws-tok', 'ps: workspace id');
+  assert(procs[3].pid === 600, 'ps: bare binary name (Linux)');
+  const ranked = rankLanguageServers(procs.filter(p => !p.workspaceId));
+  assert(ranked[0].pid === 4043, 'two workspace-less servers: the one attached to the IDE is tried before the leftover');
+  assert(ranked[ranked.length - 1].ppid === 1 && !ranked[ranked.length - 1].attached, 'orphaned servers are tried last');
+  assert(rankLanguageServers([{ ppid: 5, attached: false, pid: 1 }, { ppid: 6, attached: false, pid: 2 }])[0].pid === 1, 'equal candidates keep their order');
   const lsof = [
     'COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
-    'language_ 412   me   12u  IPv4 0x8f1c2a3b4d5e6f70      0t0  TCP 127.0.0.1:53111 (LISTEN)',
-    'language_ 412   me   14u  IPv4 0x8f1c2a3b4d5e6f71      0t0  TCP 127.0.0.1:53112 (LISTEN)',
-    'language_ 413   me   12u  IPv6 0x8f1c2a3b4d5e6f72      0t0  TCP [::1]:53200 (LISTEN)'
+    'language_  4043 me       7u  IPv4 0xe43d4fbcc0e94ea0      0t0  TCP 127.0.0.1:59002 (LISTEN)',
+    'language_  4043 me       8u  IPv4 0xb7f91768069d20c1      0t0  TCP 127.0.0.1:59003 (LISTEN)',
+    'language_  4043 me      26u  IPv4 0xff4a303f9dcdbd80      0t0  TCP 127.0.0.1:59014 (LISTEN)',
+    'language_ 60612 me      12u  IPv6 0x8f1c2a3b4d5e6f72      0t0  TCP [::1]:53200 (LISTEN)'
   ].join('\n');
   const lsofPorts = parseListeningPorts(lsof);
-  assert(JSON.stringify(lsofPorts.get(412)) === '[53111,53112]', 'lsof: loopback ports per pid');
-  assert(!lsofPorts.has(413), 'lsof: IPv6-only listener skipped (bridge connects to 127.0.0.1)');
+  assert(JSON.stringify(lsofPorts.get(4043)) === '[59002,59003,59014]', 'lsof: loopback ports per pid');
+  assert(!lsofPorts.has(60612), 'lsof: IPv6-only listener skipped (bridge connects to 127.0.0.1)');
   const ss = 'LISTEN 0      4096       127.0.0.1:41234      0.0.0.0:*    users:(("language_server",pid=600,fd=9))';
   assert(JSON.stringify(parseListeningPorts(ss).get(600)) === '[41234]', 'ss: loopback port per pid (Linux without lsof)');
 
@@ -250,6 +260,15 @@ async function run() {
   const offline = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });
   await rejects(() => offline.sendPrompt('hi'), /live bridge unavailable/, 'prompt without bridge fails loudly (no CLI fallback)');
   await rejects(() => offline.stop(), /live bridge unavailable/, 'stop without bridge fails loudly (no fake /stop prompt)');
+
+  console.log('\n[Suite 3b] Diagnostics report');
+  const report = await collectDiagnostics({ workspacePath: brain, extensionVersion: '9.9.9', discover: async () => servers, brainDir: brain });
+  assert(report.includes('Language servers found: 2') && report.includes('Connected to: pid 20'), 'report lists the servers and the one the bridge picks');
+  assert(report.includes('Conversations for this window\'s folder: 1') && report.includes('← this window'), 'report shows whether a conversation matches this window');
+  assert(!report.includes(TOKEN) && !report.includes('stale-workspace-token'), 'report never contains a csrf token');
+  assert(!report.includes('Conversation ') || !report.includes('hi'), 'report leaves out conversation titles');
+  const none = await collectDiagnostics({ workspacePath: brain, discover: async () => [], brainDir: path.join(brain, 'nope') });
+  assert(none.includes('Language servers found: 0') && none.includes('Connected to: none') && none.includes('(missing)'), 'report explains when nothing is found');
 
   const audit = fs.existsSync(auditLogger.getLogPath()) ? fs.readFileSync(auditLogger.getLogPath(), 'utf8') : '';
   assert(!audit.includes(TOKEN), 'csrf token never written to the audit log');

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2: Macs with a leftover agent process
+
+- **Picks the right agent on a Mac.** Some Macs keep an old Antigravity background process running after an update or restart. The extension could connect to that one instead of the live one and show the wrong conversations. It now prefers the process that belongs to the running IDE.
+- **Copy Diagnostics.** Run **Antigravity Remote: Copy Diagnostics** if the phone connects but shows no conversation. It copies a short report (no tokens or chat titles) showing what the extension found, so the problem can be fixed quickly.
+- **Pairing panel stays current.** The list of paired phones updates as soon as a phone is paired or unpaired, including from another window. Revoking all pairings shows a fresh QR code.
+- **Less than half the size.** The extension is now 94 KB to download and 221 KB installed (was 150 KB and 474 KB).
+
 ## 0.2.1: Mac and Linux support
 
 - **Works on macOS and Linux.** The extension could only find Antigravity's agent on Windows, so on a Mac the phone connected but could not see or control the agent. It now finds it on macOS and Linux too.

@@ -1,9 +1,11 @@
 import http from 'http';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type * as vscodeTypes from 'vscode';
 import { AntigravityAdapter } from '../adapter-antigravity/index.ts';
 import { LsBridge } from '../adapter-antigravity/ls-bridge.ts';
+import { collectDiagnostics } from '../adapter-antigravity/diagnostics.ts';
 import { SessionManager } from '../core/session-manager.ts';
 import { RemoteServer } from '../server/index.ts';
 import type { RelayPhone } from '../server/http-server.ts';
@@ -50,7 +52,9 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
   // Relay-only still needs the local port for window coordination, but nothing off this PC may reach it.
   const host = wifiOn ? (config.get<string>('host') || '0.0.0.0') : '127.0.0.1';
   hubPort = port;
-  const pwaDir = path.join(context.extensionPath, 'src', 'pwa');
+  // Packaged builds ship the minified copy (npm run build:pwa); a dev checkout serves the sources.
+  const builtPwa = path.join(context.extensionPath, 'dist', 'pwa');
+  const pwaDir = fs.existsSync(path.join(builtPwa, 'index.html')) ? builtPwa : path.join(context.extensionPath, 'src', 'pwa');
   const identity = () => ({
     windowId: activeWindowId!,
     workspaceName,
@@ -90,6 +94,14 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     if (!res) return null;
     return Array.isArray(res.phones) ? res.phones : 'off';
   };
+  const refreshPairingPanel = async () => {
+    if (!pairingPanel) return;
+    const phones = await hostRelayPhones();
+    if (Array.isArray(phones)) updatePairingPanelPhones(phones);
+  };
+  // Also catches pairings and unpairings made from another window or from the phone.
+  const panelPoll = setInterval(() => { if (pairingPanel?.visible) refreshPairingPanel(); }, 3000);
+  context.subscriptions.push({ dispose: () => clearInterval(panelPoll) });
   const hostUnpairPhone = async (pub: string): Promise<boolean> => {
     if (isHost) {
       if (!relayHost) return false;
@@ -132,6 +144,8 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     vscode.commands.registerCommand('ag-remote.revokePairings', async () => {
       const result = await hostUnpairAll();
       if (!result) return notReachable();
+      // The open panel's QR code stopped working, so show a fresh one
+      if (pairingPanel) vscode.commands.executeCommand('ag-remote.showPairingQr');
       vscode.window.showInformationMessage(result.relay
         ? 'AG-Remote: All phones unpaired (Wi-Fi and relay). Old QR codes no longer work; pair again to reconnect.'
         : 'AG-Remote: All active phone pairings revoked. Generated new secret token.');
@@ -155,6 +169,7 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       const confirm = await vscode.window.showWarningMessage(`Unpair "${pick.label}"? It will need a new QR code to connect again.`, { modal: true }, 'Unpair');
       if (confirm !== 'Unpair') return;
       if (!(await hostUnpairPhone(pick.pub))) return notReachable();
+      await refreshPairingPanel();
       vscode.window.showInformationMessage(`AG-Remote: "${pick.label}" unpaired.`);
     }),
     vscode.commands.registerCommand('ag-remote.restartServer', async () => {
@@ -163,6 +178,16 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
         await server.start();
         vscode.window.showInformationMessage(`AG-Remote: Server restarted on port ${port}`);
       }
+    }),
+    vscode.commands.registerCommand('ag-remote.diagnostics', async () => {
+      const report = await collectDiagnostics({
+        workspacePath: currentWorkspace,
+        extensionVersion: context.extension?.packageJSON?.version
+      });
+      await vscode.env.clipboard.writeText(report);
+      const doc = await vscode.workspace.openTextDocument({ content: report, language: 'markdown' });
+      await vscode.window.showTextDocument(doc);
+      vscode.window.showInformationMessage('AG-Remote: Diagnostics copied to the clipboard. They contain no tokens or chat titles.');
     }),
     vscode.window.onDidChangeWindowState((e) => {
       const info = { ...identity(), isFocused: e.focused };
@@ -220,7 +245,10 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
         store: await RelayStore.load(),
         sessionManager: sm,
         onStatus: () => showStatus(),
-        onPaired: (phone) => vscode.window.showInformationMessage(`AG-Remote: Paired "${phone.name || 'phone'}" through the relay.`)
+        onPaired: (phone) => {
+          refreshPairingPanel();
+          vscode.window.showInformationMessage(`AG-Remote: Paired "${phone.name || 'phone'}" through the relay.`);
+        }
       });
       rh.start();
       relayHost = rh;
@@ -321,25 +349,53 @@ export async function deactivate(): Promise<void> {
  * Relay QR (any network) when the relay is on, plus the Wi-Fi PIN/QR when direct mode is on.
  * The relay QR's #fragment is a one-time secret, so it is drawn but not printed as text.
  */
+// One pairing panel at a time. Its paired-phones list is redrawn when phones pair or unpair.
+let pairingPanel: vscodeTypes.WebviewPanel | null = null;
+let pairingPanelState: { relayQr?: string; wifi?: PairingInfo; paired: RelayPhone[] } | null = null;
+
 function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; wifi?: PairingInfo; paired?: RelayPhone[] }) {
-  const panel = vscode.window.createWebviewPanel(
-    'agRemotePairing',
-    'Pair Phone - AG-Remote',
-    vscode.ViewColumn.Beside,
-    // Command links only, no scripts: the "Manage" link opens the unpair picker.
-    { enableScripts: false, enableCommandUris: ['ag-remote.managePhones'] }
-  );
-
-  const { relayPairUrl, wifi } = opts;
-  if (relayPairUrl) {
-    const relayQr = QRCode.toSvg(QRCode.generateMatrix(relayPairUrl));
-    panel.webview.html = relayPanelHtml(relayQr, wifi, opts.paired || []);
-    return;
+  if (!opts.relayPairUrl && !opts.wifi) return;
+  if (pairingPanel) {
+    pairingPanel.reveal(vscode.ViewColumn.Beside);
+  } else {
+    pairingPanel = vscode.window.createWebviewPanel(
+      'agRemotePairing',
+      'Pair Phone - AG-Remote',
+      vscode.ViewColumn.Beside,
+      // Command links only, no scripts: the "Manage" link opens the unpair picker.
+      { enableScripts: false, enableCommandUris: ['ag-remote.managePhones'] }
+    );
+    pairingPanel.onDidDispose(() => {
+      pairingPanel = null;
+      pairingPanelState = null;
+    });
   }
-  if (!wifi) return;
-  const pairing = wifi;
+  pairingPanelState = {
+    relayQr: opts.relayPairUrl ? QRCode.toSvg(QRCode.generateMatrix(opts.relayPairUrl)) : undefined,
+    wifi: opts.wifi,
+    paired: opts.paired || []
+  };
+  renderPairingPanel();
+}
 
-  panel.webview.html = `<!DOCTYPE html>
+/** Redraws the open panel's phone list; the QR code and PIN stay the same. */
+function updatePairingPanelPhones(paired: RelayPhone[]) {
+  if (!pairingPanelState) return;
+  const key = (list: RelayPhone[]) => list.map((p) => `${p.pub}:${p.name}`).join('|');
+  if (key(paired) === key(pairingPanelState.paired)) return;
+  pairingPanelState.paired = paired;
+  renderPairingPanel();
+}
+
+function renderPairingPanel() {
+  if (!pairingPanel || !pairingPanelState) return;
+  const { relayQr, wifi, paired } = pairingPanelState;
+  if (relayQr) pairingPanel.webview.html = relayPanelHtml(relayQr, wifi, paired);
+  else if (wifi) pairingPanel.webview.html = wifiPanelHtml(wifi);
+}
+
+function wifiPanelHtml(pairing: PairingInfo): string {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">

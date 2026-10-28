@@ -7,7 +7,7 @@ Antigravity Remote is free and open source (MIT), and it stays that way. Every i
 
 Items marked 💡 at the end are ideas that *would* cost money to run. They are not planned; they are only noted as possible future work.
 
-Last updated: 2026-10-28 (after 0.2.2).
+Last updated: 2026-10-28 (after 0.2.2). Each item is split into its own version, with tests written first and a release gate, in the [release plan](RELEASE_PLAN.md).
 
 ---
 

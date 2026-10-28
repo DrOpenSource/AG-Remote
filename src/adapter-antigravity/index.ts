@@ -1,11 +1,30 @@
-import type { IdeAdapter, SessionSnapshot, SessionStatus, Approval, ApprovalOption, AdapterEvent } from '../core/types.ts';
+import type { IdeAdapter, SessionSnapshot, SessionStatus, Approval, ApprovalOption, AdapterEvent, PromptImage } from '../core/types.ts';
 import { type AdapterConfig, defaultConfig } from './config.ts';
 import { SessionWatcher } from './session-watcher.ts';
-import { LsBridge, normalizeWorkspace, type LiveInteraction } from './ls-bridge.ts';
+import { LsBridge, LsBridgeError, normalizeWorkspace, type LiveInteraction } from './ls-bridge.ts';
 import { auditLogger } from '../core/logger.ts';
 import { dataDir } from '../core/data-dir.ts';
 import fs from 'fs';
 import path from 'path';
+
+const IMAGE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+
+/**
+ * Fallback when the IDE refuses inline images: saves them to <workspace>/.ag-remote/uploads so the agent
+ * can open them. The folder ignores itself in git. Returns workspace-relative paths.
+ */
+export function saveUploads(workspacePath: string, images: PromptImage[], now = Date.now()): string[] {
+  const root = path.join(workspacePath, '.ag-remote');
+  const dir = path.join(root, 'uploads');
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(root, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  return images.map((img, i) => {
+    const name = `${now}-${i + 1}.${IMAGE_EXT[img.mimeType] || 'img'}`;
+    fs.writeFileSync(path.join(dir, name), Buffer.from(img.data, 'base64'));
+    return `.ag-remote/uploads/${name}`;
+  });
+}
 
 export interface AdapterDeps {
   /** Live IDE bridge. `null` disables it (tests, offline). Default: real bridge unless AG_REMOTE_LIVE_BRIDGE=0. */
@@ -202,15 +221,23 @@ export class AntigravityAdapter implements IdeAdapter {
     return { approval, live: this.livePending };
   }
 
-  public async sendPrompt(text: string): Promise<void> {
-    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+  public async sendPrompt(text: string, images: PromptImage[] = []): Promise<void> {
+    if (typeof text !== 'string' || (text.trim().length === 0 && images.length === 0)) {
       throw new Error('Prompt text cannot be empty');
     }
     const cid = this.watcher.getActiveConversationId();
     if (!this.ls) throw new Error(BRIDGE_UNAVAILABLE);
     if (!cid) throw new Error(NO_CONVERSATION);
-    auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), cascadeId: cid });
-    await this.ls.sendPrompt(cid, text.trim());
+    auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), images: images.length, cascadeId: cid });
+    try {
+      await this.ls.sendPrompt(cid, text.trim(), images);
+    } catch (err) {
+      if (!(err instanceof LsBridgeError && err.imagesRejected)) throw err;
+      const paths = saveUploads(this.workspacePath, images);
+      auditLogger.log('PROMPT_IMAGES_AS_FILES', { reason: err.message.slice(0, 200), paths });
+      const note = `Attached image${paths.length > 1 ? 's' : ''} from my phone (open to view): ${paths.join(', ')}`;
+      await this.ls.sendPrompt(cid, text.trim() ? `${text.trim()}\n\n${note}` : note);
+    }
   }
 
   public async approve(id: string, _response?: string, option: ApprovalOption = 'allow_once'): Promise<void> {

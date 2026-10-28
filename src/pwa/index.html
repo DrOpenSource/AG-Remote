@@ -13,8 +13,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="AG-Remote">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23415f91'><path d='M12 2L2 19h20L12 2zm0 4.5l6.5 11h-13L12 6.5z'/></svg>">
-  <link rel="stylesheet" href="/app.css?v=4">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23284777'/><g fill='none' stroke='%23d6e3ff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' transform='translate(12 12.5) scale(.75) translate(-12 -11.5)'><path d='M6 19l6-10 6 10'/><path d='M9.5 6.5a3.5 3.5 0 0 1 5 0'/><path d='M7.05 4.05a7 7 0 0 1 9.9 0'/></g></svg>">
+  <link rel="stylesheet" href="/app.css?v=6">
 </head>
 <body data-status="disconnected">
   <div class="app-container">
@@ -22,10 +22,10 @@
     <header class="app-header">
       <div class="header-left">
         <div class="brand-logo" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2L2 19h20L12 2zm0 4.5l6.5 11h-13L12 6.5z"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19l6-10 6 10"/><path d="M9.5 6.5a3.5 3.5 0 0 1 5 0"/><path d="M7.05 4.05a7 7 0 0 1 9.9 0"/></svg>
         </div>
         <div class="header-titles">
-          <h1 class="brand-title">AG Remote</h1>
+          <h1 class="sr-only">AG Remote</h1>
           <button id="btnSwitchSession" class="session-label-btn" title="Switch window or conversation">
             <span class="session-label" id="sessionLabel">Connecting...</span>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
@@ -85,7 +85,7 @@
     <main class="chat-feed" id="chatFeed">
       <div class="empty-state" id="emptyState">
         <div class="empty-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M12 2L2 19h20L12 2zm0 4.5l6.5 11h-13L12 6.5z"/></svg>
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19l6-10 6 10"/><path d="M9.5 6.5a3.5 3.5 0 0 1 5 0"/><path d="M7.05 4.05a7 7 0 0 1 9.9 0"/></svg>
         </div>
         <h2>Connected to Antigravity</h2>
         <p>Messages and approval requests from the IDE appear here as they happen.</p>
@@ -98,7 +98,12 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
         Stop
       </button>
+      <div class="attach-tray hidden" id="attachTray" aria-label="Attached images"></div>
       <form class="prompt-form" id="promptForm">
+        <button type="button" class="btn-attach" id="btnAttach" aria-label="Attach images" title="Attach images">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
+        </button>
+        <input type="file" id="attachInput" accept="image/*" multiple hidden>
         <textarea
           id="promptInput"
           placeholder="Message Antigravity"
@@ -155,6 +160,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

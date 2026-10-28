@@ -138,8 +138,8 @@ button { font: inherit; color: inherit; }
 .header-titles { min-width: 0; }
 
 .brand-logo {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--shape-md);
   background: var(--md-primary-container);
   color: var(--md-on-primary-container);
@@ -149,32 +149,39 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
 }
 
-.brand-title {
-  font-size: 18px;
-  line-height: 24px;
-  font-weight: 500;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
+/* The active project/conversation is the header title; tap to switch */
 .session-label-btn {
   display: flex;
   align-items: center;
   gap: 2px;
   max-width: 100%;
+  min-height: 40px;
   background: none;
   border: none;
-  padding: 2px 0;
-  color: var(--md-on-surface-variant);
+  padding: 0;
+  color: var(--md-on-surface);
   cursor: pointer;
   text-align: left;
 }
+.session-label-btn svg { color: var(--md-on-surface-variant); flex-shrink: 0; }
 
 .session-label {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 52vw;
+  max-width: 42vw;
 }
 
 .header-right {
@@ -615,6 +622,19 @@ body[data-status="generating"] .progress { opacity: 1; }
   word-wrap: break-word;
 }
 
+.chat-link { color: var(--md-primary); }
+
+/* File cited by the agent, shown by name only */
+.chat-file {
+  padding: 0 6px;
+  border-radius: var(--shape-sm);
+  background: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  color: var(--md-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 /* Bottom bar */
 .app-footer {
   position: relative;
@@ -646,7 +666,7 @@ body[data-status="generating"] .progress { opacity: 1; }
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  padding: 4px 4px 4px 20px;
+  padding: 4px 4px 4px 2px;
   background: var(--md-surface-container-high);
   border-radius: var(--shape-xl);
   border: 2px solid transparent;
@@ -687,6 +707,70 @@ body[data-status="generating"] .progress { opacity: 1; }
   color: var(--md-on-surface-variant);
   opacity: 0.6;
   cursor: default;
+}
+
+.btn-attach {
+  width: 44px;
+  height: 48px;
+  border: none;
+  border-radius: var(--shape-full);
+  background: none;
+  color: var(--md-on-surface-variant);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.btn-attach:active { background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); }
+.btn-attach:disabled { opacity: 0.4; }
+
+/* Picked images waiting to be sent */
+.attach-tray {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px 8px;
+  overflow-x: auto;
+}
+.attach-item {
+  position: relative;
+  flex-shrink: 0;
+}
+.attach-item img {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--shape-md);
+  border: 1px solid var(--md-outline-variant);
+}
+.attach-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: var(--md-inverse-surface);
+  color: var(--md-inverse-on-surface);
+  font-size: 16px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+/* Images inside a sent message */
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+.chat-images img {
+  max-width: 160px;
+  max-height: 160px;
+  border-radius: var(--shape-md);
+  object-fit: cover;
 }
 
 /* Snackbar: sits above every layer, including dialogs */

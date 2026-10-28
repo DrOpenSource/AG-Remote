@@ -24,6 +24,9 @@
   const promptForm = document.getElementById('promptForm');
   const promptInput = document.getElementById('promptInput');
   const btnSend = document.getElementById('btnSend');
+  const btnAttach = document.getElementById('btnAttach');
+  const attachInput = document.getElementById('attachInput');
+  const attachTray = document.getElementById('attachTray');
   const toastBanner = document.getElementById('toastBanner');
   const toastMessage = document.getElementById('toastMessage');
   const toastClose = document.getElementById('toastClose');
@@ -56,10 +59,10 @@
   }
 
   /** One API call over whichever transport this page uses. Resolves { ok, status, data }. */
-  async function api(method, path, body) {
+  async function api(method, path, body, timeoutMs) {
     if (relayMode) {
       if (!relay) throw new Error('not-connected');
-      return relay.request(method, path, body);
+      return relay.request(method, path, body, timeoutMs);
     }
     const headers = { 'Authorization': `Bearer ${token}` };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -601,7 +604,7 @@
   }
 
   function appendChatMessage(msg, shouldScroll = true) {
-    if (!msg || !msg.text) return;
+    if (!msg || (!msg.text && !msg.images?.length)) return;
     emptyState.classList.add('hidden');
 
     const bubble = document.createElement('div');
@@ -614,13 +617,59 @@
 
     const text = document.createElement('div');
     text.className = 'chat-text';
-    text.textContent = msg.text;
+    renderMessageText(text, msg.text);
 
     bubble.appendChild(author);
-    bubble.appendChild(text);
+    if (msg.images?.length) {
+      const thumbs = document.createElement('div');
+      thumbs.className = 'chat-images';
+      for (const src of msg.images) {
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = 'Attached image';
+        thumbs.appendChild(img);
+      }
+      bubble.appendChild(thumbs);
+    }
+    if (msg.text) bubble.appendChild(text);
     chatFeed.appendChild(bubble);
 
     if (shouldScroll) scrollToBottom();
+  }
+
+  // Agent replies cite files as markdown links with long file:/// URLs. Show
+  // just the file name for those (full path on long-press/hover), and make
+  // web links tappable. Built with DOM nodes, so message text is never parsed as HTML.
+  const MD_LINK = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+
+  function renderMessageText(el, raw) {
+    let last = 0;
+    for (const m of raw.matchAll(MD_LINK)) {
+      el.append(raw.slice(last, m.index));
+      el.append(linkNode(m[1], m[2]));
+      last = m.index + m[0].length;
+    }
+    el.append(raw.slice(last));
+  }
+
+  function linkNode(label, url) {
+    if (/^https?:\/\//i.test(url)) {
+      const a = document.createElement('a');
+      a.className = 'chat-link';
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = label;
+      return a;
+    }
+    // file:/// or a bare path: there is nothing to open on the phone
+    const span = document.createElement('span');
+    span.className = 'chat-file';
+    span.textContent = label.replace(/^`|`$/g, '').split(/[\\/]/).pop() || label;
+    let path = url;
+    try { path = decodeURIComponent(url.replace(/^file:\/\/\/?/i, '')); } catch { /* keep raw */ }
+    span.title = path;
+    return span;
   }
 
   function scrollToBottom() {
@@ -816,28 +865,141 @@
     toastBanner.classList.add('hidden');
   }
 
-  function addLocalMessage(text, tabId) {
-    const msg = { id: `local-${Date.now()}`, role: 'user', text, ts: Date.now() };
+  function addLocalMessage(text, tabId, images) {
+    const msg = { id: `local-${Date.now()}`, role: 'user', text, ts: Date.now(), images };
     tabFor(tabId).messages.push(msg);
     if (tabId === activeTabId) appendChatMessage(msg);
   }
 
+  // Images picked on the phone, already compressed: { mimeType, data (base64), src (data: URL) }
+  const MAX_ATTACHMENTS = 4;
+  const MAX_IMAGE_EDGE = 1600;
+  const TARGET_IMAGE_BYTES = 400 * 1024;
+  let attachments = [];
+
+  function updateSendEnabled() {
+    btnSend.disabled = promptInput.value.trim().length === 0 && attachments.length === 0;
+  }
+
+  function loadImage(file) {
+    if (window.createImageBitmap) return createImageBitmap(file);
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+      img.src = url;
+    });
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /** Downscales and re-encodes as JPEG until it fits TARGET_IMAGE_BYTES, so it travels fast over the relay. */
+  async function compressImage(file) {
+    const img = await loadImage(file);
+    let scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(img.width, img.height));
+    for (;;) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; // transparent PNG areas would turn black in JPEG
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      for (const q of [0.85, 0.72, 0.6]) {
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', q));
+        if (blob && (blob.size <= TARGET_IMAGE_BYTES || (q === 0.6 && scale < 0.3))) {
+          const data = await blobToBase64(blob);
+          return { mimeType: 'image/jpeg', data, src: `data:image/jpeg;base64,${data}` };
+        }
+      }
+      scale *= 0.75;
+    }
+  }
+
+  function renderAttachTray() {
+    attachTray.innerHTML = '';
+    attachTray.classList.toggle('hidden', attachments.length === 0);
+    attachments.forEach((a, i) => {
+      const item = document.createElement('div');
+      item.className = 'attach-item';
+      const img = document.createElement('img');
+      img.src = a.src;
+      img.alt = `Attachment ${i + 1}`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'attach-remove';
+      remove.setAttribute('aria-label', 'Remove image');
+      remove.textContent = '×';
+      remove.addEventListener('click', () => {
+        attachments.splice(i, 1);
+        renderAttachTray();
+        updateSendEnabled();
+      });
+      item.append(img, remove);
+      attachTray.appendChild(item);
+    });
+  }
+
+  async function addAttachments(files) {
+    const room = MAX_ATTACHMENTS - attachments.length;
+    const picked = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (picked.length > room) showToast(`Up to ${MAX_ATTACHMENTS} images per message.`);
+    btnAttach.disabled = true;
+    try {
+      for (const file of picked.slice(0, Math.max(0, room))) {
+        try {
+          attachments.push(await compressImage(file));
+        } catch (_) {
+          showToast('Could not read that image.');
+        }
+        renderAttachTray();
+      }
+    } finally {
+      btnAttach.disabled = false;
+      updateSendEnabled();
+    }
+  }
+
   // 5. User Action Handlers
   async function sendPrompt(text) {
-    if (!text.trim() || !linked()) return;
+    if ((!text.trim() && attachments.length === 0) || !linked()) return;
     const tabId = activeTabId;
+    const sending = attachments;
 
     // Optimistic UI append
-    addLocalMessage(text.trim(), tabId);
+    addLocalMessage(text.trim(), tabId, sending.map(a => a.src));
     promptInput.value = '';
     promptInput.style.height = 'auto';
-    btnSend.disabled = true;
+    attachments = [];
+    renderAttachTray();
+    updateSendEnabled();
 
+    const body = { text: text.trim() };
+    if (sending.length) body.images = sending.map(a => ({ mimeType: a.mimeType, data: a.data }));
+    let failed = false;
     try {
-      const res = await api('POST', '/api/prompt', withWindow({ text: text.trim() }, tabId));
-      if (!res.ok) showToast(res.data.error || 'Failed to send prompt');
+      const res = await api('POST', '/api/prompt', withWindow(body, tabId), sending.length ? 60000 : undefined);
+      if (!res.ok) {
+        failed = true;
+        showToast(res.data.error || 'Failed to send prompt');
+      }
     } catch (err) {
+      failed = true;
       showToast('Network error sending prompt.');
+    }
+    // Give the images back so they can be resent, unless new ones were picked meanwhile
+    if (failed && sending.length && attachments.length === 0) {
+      attachments = sending;
+      renderAttachTray();
+      updateSendEnabled();
     }
   }
 
@@ -929,8 +1091,24 @@
     tokenInput.value = '';
   });
 
+  btnAttach.addEventListener('click', () => attachInput.click());
+  attachInput.addEventListener('change', () => {
+    const files = attachInput.files;
+    if (files && files.length) addAttachments(files);
+    attachInput.value = ''; // lets the same image be picked again
+  });
+
+  // Pasting an image (e.g. from the clipboard on a tablet or desktop browser) attaches it
+  promptInput.addEventListener('paste', (e) => {
+    const files = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'));
+    if (files.length) {
+      e.preventDefault();
+      addAttachments(files);
+    }
+  });
+
   promptInput.addEventListener('input', () => {
-    btnSend.disabled = promptInput.value.trim().length === 0;
+    updateSendEnabled();
     // Auto-expand textarea
     promptInput.style.height = 'auto';
     promptInput.style.height = `${Math.min(promptInput.scrollHeight, 120)}px`;

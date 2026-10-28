@@ -12,6 +12,12 @@ export interface ChatMessage {
   ts: number;
 }
 
+/** An image attached to a prompt from the phone; data is base64 without a data: prefix. */
+export interface PromptImage {
+  mimeType: string;
+  data: string;
+}
+
 /** allow_once = "Yes, allow this time"; allow_conversation = "always allow in this conversation"; always_allow is a legacy alias of allow_conversation. */
 export type ApprovalOption = 'allow_once' | 'allow_conversation' | 'always_allow' | 'deny';
 
@@ -48,7 +54,7 @@ export interface IdeAdapter {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getSnapshot(): Promise<SessionSnapshot>;
-  sendPrompt(text: string): Promise<void>;
+  sendPrompt(text: string, images?: PromptImage[]): Promise<void>;
   getPendingApproval(): Promise<Approval | null>;
   approve(id: string, response?: string, option?: ApprovalOption): Promise<void>;
   deny(id: string, reason?: string): Promise<void>;

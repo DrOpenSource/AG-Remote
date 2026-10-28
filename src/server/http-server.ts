@@ -452,7 +452,7 @@ export class RemoteServer {
       let data = '';
       req.on('data', chunk => {
         data += chunk;
-        if (data.length > 1024 * 1024) { // 1MB limit
+        if (data.length > 10 * 1024 * 1024) { // 10MB: room for base64 image attachments
           reject(new Error('Body payload too large'));
         }
       });

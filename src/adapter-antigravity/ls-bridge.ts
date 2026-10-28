@@ -13,6 +13,7 @@
 import http from 'http';
 import https from 'https';
 import { execFile } from 'child_process';
+import type { PromptImage } from '../core/types.ts';
 
 export interface LsServer {
   pid: number;
@@ -48,7 +49,10 @@ const CONFIRM_ONLY_KINDS = new Set([
   'openBrowserUrl', 'captureBrowserScreenshot', 'executeBrowserJavascript', 'mcp', 'readUrlContent'
 ]);
 
-export class LsBridgeError extends Error {}
+export class LsBridgeError extends Error {
+  /** Set when the server refused a prompt that carried images; nothing was added to the chat. */
+  imagesRejected = false;
+}
 
 /** Builds the HandleCascadeUserInteraction "interaction" payload. Pure; exported for tests. */
 export function buildInteraction(p: LiveInteraction, d: Decision): Record<string, unknown> {
@@ -222,8 +226,11 @@ export class LsBridge {
     throw new LsBridgeError('The IDE did not accept the response (step is still waiting)');
   }
 
-  /** Sends a follow-up prompt into an existing conversation, reusing its last user config. */
-  public async sendPrompt(cascadeId: string, text: string): Promise<void> {
+  /**
+   * Sends a follow-up prompt into an existing conversation, reusing its last user config.
+   * Images go in the request's `images` field (ImageData{base64Data, mimeType}, read from the LS binary).
+   */
+  public async sendPrompt(cascadeId: string, text: string, images: PromptImage[] = []): Promise<void> {
     const traj = await this.getTrajectory(cascadeId);
     if (!traj) throw new LsBridgeError('Conversation not found in the IDE');
     const steps: any[] = traj.steps || [];
@@ -232,9 +239,18 @@ export class LsBridge {
       if (steps[i]?.userInput?.userConfig) { cascadeConfig = steps[i].userInput.userConfig; break; }
     }
     const before = steps.length;
-    await this.call('SendUserCascadeMessage', {
-      cascadeId, items: [{ text }], ...(cascadeConfig ? { cascadeConfig } : {})
-    }, true);
+    try {
+      await this.call('SendUserCascadeMessage', {
+        cascadeId,
+        items: text ? [{ text }] : [],
+        ...(images.length ? { images: images.map(i => ({ base64Data: i.data, mimeType: i.mimeType })) } : {}),
+        ...(cascadeConfig ? { cascadeConfig } : {})
+      }, true);
+    } catch (err) {
+      // The server refused the message itself, so nothing reached the conversation.
+      if (images.length && err instanceof LsBridgeError && /HTTP \d/.test(err.message)) err.imagesRejected = true;
+      throw err;
+    }
 
     const deadline = Date.now() + this.verifyTimeoutMs;
     while (Date.now() < deadline) {

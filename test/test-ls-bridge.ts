@@ -9,6 +9,7 @@ import path from 'path';
 import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
+import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
 
 let passed = 0;
 let failed = 0;
@@ -32,11 +33,13 @@ const CASCADE = '11111111-2222-3333-4444-555555555555';
 interface FakeState {
   steps: any[];
   acceptInteraction: boolean;
+  /** Answer prompts that carry images with an error, like an IDE build without image support. */
+  rejectImages: boolean;
   /** Folder the fake IDE's conversation list assigns to CASCADE. */
   workspace: string;
   calls: Array<{ method: string; body: any; token: string | undefined }>;
 }
-const state: FakeState = { steps: [], acceptInteraction: true, workspace: '', calls: [] };
+const state: FakeState = { steps: [], acceptInteraction: true, rejectImages: false, workspace: '', calls: [] };
 
 function waitingStep(cmd = 'echo hello > probe.txt') {
   return {
@@ -65,6 +68,9 @@ const server = http.createServer((req, res) => {
     try { parsed = JSON.parse(body || '{}'); } catch (_) {}
     state.calls.push({ method, body: parsed, token });
     if (token !== TOKEN) { res.writeHead(401); res.end('{"code":"unauthenticated"}'); return; }
+    if (method === 'SendUserCascadeMessage' && state.rejectImages && parsed.images) {
+      res.writeHead(400); res.end('{"code":"invalid_argument","message":"unknown field images"}'); return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     if (method === 'GetCascadeTrajectory') {
       if (parsed.cascadeId !== CASCADE) { res.end('{}'); return; }
@@ -140,6 +146,37 @@ async function run() {
   const prompt = state.calls.find(c => c.method === 'SendUserCascadeMessage');
   assert(prompt?.body.items?.[0]?.text === 'continue please', 'sendPrompt sends items[].text');
   assert(prompt?.body.cascadeConfig?.plannerConfig?.agenticMode === true, 'sendPrompt reuses the conversation\'s last user config');
+  assert(prompt?.body.images === undefined, 'text-only prompt sends no images field');
+
+  state.calls = [];
+  await bridge.sendPrompt(CASCADE, 'what is wrong here?', [{ mimeType: 'image/jpeg', data: 'AAAA' }]);
+  const withImg = state.calls.find(c => c.method === 'SendUserCascadeMessage');
+  assert(withImg?.body.items?.[0]?.text === 'what is wrong here?', 'image prompt keeps its text');
+  assert(JSON.stringify(withImg?.body.images) === '[{"base64Data":"AAAA","mimeType":"image/jpeg"}]', 'images sent as ImageData{base64Data, mimeType}');
+
+  state.calls = [];
+  await bridge.sendPrompt(CASCADE, '', [{ mimeType: 'image/png', data: 'AAAA' }]);
+  const imgOnly = state.calls.find(c => c.method === 'SendUserCascadeMessage');
+  assert(Array.isArray(imgOnly?.body.items) && imgOnly.body.items.length === 0, 'image-only prompt sends no empty text item');
+
+  state.rejectImages = true;
+  try {
+    await bridge.sendPrompt(CASCADE, 'x', [{ mimeType: 'image/png', data: 'AAAA' }]);
+    assert(false, 'refused images throw');
+  } catch (e: any) {
+    assert(e.imagesRejected === true, 'IDE refusing images is flagged so the adapter can fall back');
+  }
+  state.rejectImages = false;
+
+  console.log('\n[Suite 2b] Prompt image validation');
+  assert(Array.isArray(parsePromptImages(undefined)) && (parsePromptImages(undefined) as any[]).length === 0, 'no images is fine');
+  assert(typeof parsePromptImages('x') === 'string', 'images must be an array');
+  assert(typeof parsePromptImages([{ mimeType: 'image/svg+xml', data: 'AAAA' }]) === 'string', 'svg refused (only raster types)');
+  assert(typeof parsePromptImages([{ mimeType: 'image/png', data: 'not base64!' }]) === 'string', 'non-base64 data refused');
+  assert(typeof parsePromptImages(Array(MAX_PROMPT_IMAGES + 1).fill({ mimeType: 'image/png', data: 'AAAA' })) === 'string', 'too many images refused');
+  assert(typeof parsePromptImages([{ mimeType: 'image/png', data: 'A'.repeat(MAX_PROMPT_IMAGE_BYTES * 4 / 3 + 8) }]) === 'string', 'oversized images refused');
+  const ok = parsePromptImages([{ mimeType: 'image/jpeg', data: 'AAAA', extra: 'dropped' }]);
+  assert(Array.isArray(ok) && JSON.stringify(ok) === '[{"mimeType":"image/jpeg","data":"AAAA"}]', 'valid image passes with only known fields');
 
   state.calls = [];
   await bridge.cancel(CASCADE);
@@ -173,6 +210,16 @@ async function run() {
   const conv = state.calls.find(c => c.method === 'HandleCascadeUserInteraction');
   assert(conv?.body.interaction.permission.scope === 2, 'adapter maps allow_conversation to scope 2');
   assert((await adapter.getSnapshot()).pendingApproval === null, 'approval clears after the IDE accepts');
+
+  state.rejectImages = true;
+  state.calls = [];
+  await adapter.sendPrompt('look', [{ mimeType: 'image/png', data: Buffer.from('png-bytes').toString('base64') }]);
+  const fallback = state.calls.filter(c => c.method === 'SendUserCascadeMessage').pop();
+  const saved = /\.ag-remote\/uploads\/[\w-]+\.png/.exec(fallback?.body.items?.[0]?.text || '')?.[0];
+  assert(saved && fallback?.body.images === undefined, 'refused images are resent as a text prompt naming the saved file');
+  assert(saved && fs.readFileSync(path.join(brain, saved), 'utf8') === 'png-bytes', 'image saved into the workspace with its exact bytes');
+  assert(fs.readFileSync(path.join(brain, '.ag-remote', '.gitignore'), 'utf8').trim() === '*', 'upload folder ignores itself in git');
+  state.rejectImages = false;
   await adapter.disconnect();
 
   const offline = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });

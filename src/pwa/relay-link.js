@@ -139,7 +139,7 @@ export class RelayLink {
   }
 
   /** Same shape the app gets from fetch: { ok, status, data }. Throws when the laptop is unreachable. */
-  request(method, path, body) {
+  request(method, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (!this.isReady()) return Promise.reject(new Error('not-connected'));
     this.lastActivity = Date.now();
     const id = this.nextId++;
@@ -147,7 +147,7 @@ export class RelayLink {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('timeout'));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.e2e.send({ k: 'req', id, method, path, body }).catch((err) => {
         clearTimeout(timer);

@@ -1,4 +1,27 @@
 import { SessionManager } from '../core/session-manager.ts';
+import type { PromptImage } from '../core/types.ts';
+
+export const MAX_PROMPT_IMAGES = 4;
+/** Decoded bytes across all images in one prompt. The phone compresses well below this. */
+export const MAX_PROMPT_IMAGE_BYTES = 6 * 1024 * 1024;
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/** Validates body.images; returns the list, or an error string. */
+export function parsePromptImages(raw: unknown): PromptImage[] | string {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) return '"images" must be an array';
+  if (raw.length > MAX_PROMPT_IMAGES) return `At most ${MAX_PROMPT_IMAGES} images per message`;
+  let total = 0;
+  const out: PromptImage[] = [];
+  for (const img of raw) {
+    if (!img || !IMAGE_TYPES.includes(img.mimeType)) return 'Unsupported image type';
+    if (typeof img.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(img.data)) return 'Image data must be base64';
+    total += Math.floor(img.data.length * 3 / 4);
+    if (total > MAX_PROMPT_IMAGE_BYTES) return 'Images are too large';
+    out.push({ mimeType: img.mimeType, data: img.data });
+  }
+  return out;
+}
 
 export interface ApiResult {
   status: number;
@@ -58,10 +81,12 @@ export async function handlePhoneApi(
 
   // POST /api/prompt
   if (method === 'POST' && pathname === '/api/prompt') {
-    if (!body || typeof body.text !== 'string' || body.text.trim().length === 0) {
+    const images = parsePromptImages(body?.images);
+    if (typeof images === 'string') return bad(images);
+    if (!body || typeof body.text !== 'string' || (body.text.trim().length === 0 && images.length === 0)) {
       return bad('Body must contain non-empty "text" field');
     }
-    await sm.sendPrompt(body.text, windowIdOf(body));
+    await sm.sendPrompt(body.text, windowIdOf(body), images);
     return { status: 200, body: { status: 'sent' } };
   }
 

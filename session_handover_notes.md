@@ -32,6 +32,25 @@
   - *Root Cause 1 (Notification Delay)*: Mobile OS throttles async WebCrypto encryption when backgrounding, dropping the encrypted `{ visible: false }` API call and causing the host to keep suppressing push for 30–60s until DO socket timeout. Fixed with synchronous unencrypted presence frame `{ t: 'vis', v: boolean }`, 15s auto-expiring `visiblePeers` map, and Web Push `Topic` header.
   - *Root Cause 2 (Reopen Offline / Lag)*: OS puts socket to sleep without FIN; browser keeps `readyState === 1`, causing `ensureConnected()` to skip reconnect and stall on dead socket until browser timeout + exponential backoff. Fixed with `wake()` on `RelayLink`, 10s socket liveness check, immediate backoff reset to 1000ms, emergency 1.5s visible backoff clamp, and `pageshow`/`focus`/`freeze` lifecycle listeners.
 
+## 3b. Phone UI polish + attachments (2026-10-28, NEXT SESSION STARTS HERE)
+- **Done, NOT committed, NOT live-tested on the phone** (`git status` shows them; `test:pwa` 22/22):
+  - Header: dropped the "AG Remote" title (kept as `sr-only` h1). Header = new logo + the project/conversation name as the 16px title (tap to switch). New icon (arch + two signal arcs) in header, empty state, favicon, manifest. Manifest `short_name` = `Remote`. Logo 40→36px.
+  - Replies: markdown links in messages render via `renderMessageText()` in `src/pwa/app.js`. `file:///` links show as a file-name chip (`.chat-file`, full path in `title`); `http(s)` links become `<a target=_blank>`. DOM nodes only, no innerHTML.
+  - Cache busting: `app.css?v=5`, `app.js?v=6`, SW `ag-remote-shell-v9`.
+- **Phone image attachments: BUILT 2026-10-28 AM, not committed, NOT live-tested** (full `npm test` green, `test:ls` 56/56, `npm run build` OK):
+  - LS binary shows `SendUserCascadeMessageRequest` has `images` (repeated `exa.codeium_common_pb.ImageData{base64Data, mimeType, caption, uri}`) and `media`. We send `images: [{ base64Data, mimeType }]`; `items` is `[]` for image-only prompts. Unverified: whether the agent actually *sees* them, and whether `items: []` is accepted.
+  - Fallback (automatic): if the LS answers the image prompt with an HTTP error (`LsBridgeError.imagesRejected`), `saveUploads()` in `src/adapter-antigravity/index.ts` writes `<workspace>/.ag-remote/uploads/<ts>-N.jpg` (folder has its own `.gitignore` = `*`) and resends as text "Attached image(s) from my phone (open to view): <paths>". If the LS *accepts* the images but the agent ignores them, there is no fallback yet; that is what the live test decides.
+  - API: `/api/prompt` takes `images: [{mimeType, data}]`, checked by `parsePromptImages()` in `src/server/api.ts` (≤4, jpeg/png/webp/gif, base64, ≤6 MB decoded). LAN body limit raised 1 MB→10 MB. Relay already chunks E2E frames (30 KB parts, 32 MB max); relay request timeout is 60 s for image prompts. No relay redeploy needed (previews use `data:` URLs because the relay CSP has no `blob:`).
+  - Phone: 📎 button left of the input → picker (camera or gallery), canvas downscale to 1600px longest edge, JPEG ≤ ~400 KB, thumbnail tray with ×, paste-to-attach, images shown in your sent bubble, images restored on send failure. Cache: `app.css?v=6`, `app.js?v=7`, SW `ag-remote-shell-v10`.
+- **VSIX 0.2.0 packaged 2026-10-28** (`ag-remote-0.2.0.vsix`, 147 KB): publisher `ag-remote` → `dr-opensource` (matches EnvWizard/AudioWizard/GitWizard/LaunchWizard), author "Dr. Shubham Kashyap", displayName "Antigravity Remote", icon `assets/icon.png` (256px, rendered from `assets/icon.svg` with headless Edge, same squircle style as siblings), `CHANGELOG.md` added, LICENSE holder "Dr. OpenSource". The ID changed, so 0.1.0 must be uninstalled first or two copies fight over port 49222. Pairings are in `~/.ag-remote`, so they survive. Not committed, not tagged, not published anywhere.
+- **This afternoon's test plan (owner, once the Antigravity token renews):**
+  1. Uninstall the old "Antigravity Remote Control" (publisher ag-remote), install `ag-remote-0.2.0.vsix`, reload windows.
+  2. Phone: check header, new icon, file-name chips in replies.
+  3. Attach a screenshot + "What do you see in this image?" → expect the agent to describe it. Repeat over mobile data (relay mode) and over Wi-Fi.
+  4. Image only, no text → check it is accepted.
+  5. If the agent says it sees no image: check `~/.ag-remote` audit log for `PROMPT_IMAGES_AS_FILES`; next step would be trying the `media` field or a forced file mode.
+  - Ask before commits and deploys, as usual.
+
 ## 4. Working agreements and gotchas
 - The auto-mode classifier blocks me from reading process command lines/credentials. Such code runs in the extension, triggered by the owner.
 - The owner can't see tool output: give numbered, click-level steps and a pass/fail table.

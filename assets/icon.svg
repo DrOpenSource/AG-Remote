@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <defs>
+    <linearGradient id="sq-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a2845"/>
+      <stop offset="50%" stop-color="#181824"/>
+      <stop offset="100%" stop-color="#101016"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="70%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle frame, same as the other Dr. OpenSource extensions -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#sq-bg)" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
+
+  <!-- Arch (the agent) sending two signal waves (the phone link); same glyph as the phone app header -->
+  <g stroke="url(#glyph)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M36 96 L64 52 L92 96" fill="rgba(99,102,241,0.15)"/>
+  </g>
+  <g stroke="#38bdf8" stroke-width="7" stroke-linecap="round" filter="url(#glow)">
+    <path d="M52.7 40.7 A16 16 0 0 1 75.3 40.7"/>
+    <path d="M41.4 29.4 A32 32 0 0 1 86.6 29.4"/>
+  </g>
+  <circle cx="64" cy="52" r="4.5" fill="#ffffff" filter="url(#glow)"/>
+</svg>

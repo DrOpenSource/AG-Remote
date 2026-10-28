@@ -19,7 +19,7 @@ Works out of the box on **any network** (cellular mobile data, remote Wi-Fi, or 
 Install the extension directly in Google Antigravity IDE:
 1. Open the Extensions view (`Ctrl+Shift+X`).
 2. Click the `...` menu at the top-right -> **Install from VSIX...**.
-3. Select `ag-remote-0.1.0.vsix`.
+3. Select `ag-remote-0.2.0.vsix`. If you installed 0.1.0 before, uninstall it first (its publisher was `ag-remote`, now `dr-opensource`); your paired phones stay paired.
 4. Click the `$(radio-tower) AG-Remote` icon in the bottom status bar (or press `Ctrl+Shift+P` -> `Antigravity Remote: Show Pairing QR Code`).
 
 *(Alternative: Run standalone in your terminal with `npm start`)*.
@@ -64,6 +64,7 @@ AG-Remote has permissions to approve terminal commands and file modifications. S
 | **Multi-Window Switcher** | One tab per active IDE window with real-time focus badges and seamless host failover. |
 | **Push Notifications** | Web Push alerts when the agent is waiting for approval or completes while your phone is locked. |
 | **Send Prompts & Stop** | Mobile composer with Enter-to-send and an instant emergency `Stop` button. |
+| **Screenshot Attachments** | Attach up to 4 photos or screenshots to a prompt; they are compressed on the phone and sent end-to-end encrypted. |
 | **Instant Sleep/Wake Resync** | Resyncs live session state in < 1 second upon unlocking your phone. |
 | **OLED Dark Mode** | Premium Material 3 dark aesthetic tailored for mobile displays. |
 
@@ -108,4 +109,4 @@ npm run package
 
 ## 📜 License
 
-[MIT License](LICENSE) © AG-Remote Authors
+[MIT License](LICENSE) © Dr. OpenSource

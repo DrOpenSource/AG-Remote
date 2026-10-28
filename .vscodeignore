@@ -21,3 +21,5 @@ src/pairing/**
 src/relay-host/**
 src/server/**
 bin/**
+assets/icon.svg
+

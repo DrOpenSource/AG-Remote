@@ -1,10 +1,13 @@
 {
   "name": "ag-remote",
-  "displayName": "Antigravity Remote Control",
-  "description": "Phone Remote Control for Google Antigravity Agent (Approve, Deny, Prompt & Stop from your phone)",
-  "version": "0.1.0",
-  "publisher": "ag-remote",
+  "displayName": "Antigravity Remote",
+  "description": "Control your Antigravity agent from your phone: approve or deny commands, send prompts and screenshots, stop runs and get notified, on any network with end-to-end encryption.",
+  "version": "0.2.0",
+  "publisher": "dr-opensource",
+  "icon": "assets/icon.png",
+  "author": "Dr. Shubham Kashyap",
   "license": "MIT",
+  "pricing": "Free",
   "type": "module",
   "engines": {
     "vscode": "^1.80.0"

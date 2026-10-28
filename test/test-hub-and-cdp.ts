@@ -90,6 +90,28 @@ async function runTests() {
   const selRes = await postJson('http://127.0.0.1:49235/api/windows/select', { windowId: 'win-ext-test' }, token);
   assert(selRes.status === 'selected', 'POST /api/windows/select switches active window');
 
+  // Pairing control for linked windows (Manage Paired Phones from a non-host window)
+  const noRelay = await postJson('http://127.0.0.1:49235/api/hub/relay-phones', {});
+  assert(noRelay.error === 'Relay is not enabled', 'relay-phones reports relay off before the host sets control');
+  const phones = [{ pub: 'pk1', name: 'Android phone', pairedAt: 1 }, { pub: 'pk2', name: 'iPhone', pairedAt: 2 }];
+  let unpairedAll = false;
+  server.setHostControl({
+    relayPairUrl: async () => 'https://relay.example/p/room#secret',
+    relayPhones: () => phones,
+    unpairRelayPhone: async (pub) => { phones.splice(phones.findIndex(p => p.pub === pub), 1); },
+    unpairAll: async () => { unpairedAll = true; return true; }
+  });
+  const listed = await postJson('http://127.0.0.1:49235/api/hub/relay-phones', {});
+  assert(listed.phones?.length === 2 && listed.phones[0].name === 'Android phone', 'relay-phones lists the host\'s paired phones');
+  const unpaired = await postJson('http://127.0.0.1:49235/api/hub/relay-unpair', { pub: 'pk1' });
+  assert(unpaired.ok === true && phones.length === 1 && phones[0].pub === 'pk2', 'relay-unpair removes only that phone');
+  const all = await postJson('http://127.0.0.1:49235/api/hub/unpair-all', {});
+  assert(all.ok === true && all.relay === true && unpairedAll, 'unpair-all runs on the host');
+  const fromBrowser = await postJson('http://127.0.0.1:49235/api/hub/relay-pair', {}, undefined, { Origin: 'https://evil.example' });
+  assert(!fromBrowser.url && fromBrowser.error?.startsWith('Unauthorized'), 'hub rejects browser requests (Origin header) even over loopback');
+  const unpairFromBrowser = await postJson('http://127.0.0.1:49235/api/hub/relay-unpair', { pub: 'pk2' }, undefined, { Origin: 'null' });
+  assert(!unpairFromBrowser.ok && phones.length === 1, 'a web page cannot unpair phones through loopback');
+
   // --- Suite 3: Live bridge approval options ---
   console.log('\n[Suite 3] Live Bridge Approval Options (verified wire shapes, NOTES.md §13)');
   const p = { cascadeId: 'c', trajectoryId: 't', stepIndex: 4, kind: 'permission', stepType: 'RUN_COMMAND', commandLine: 'echo hi' };
@@ -115,13 +137,14 @@ async function runTests() {
   if (failed > 0) process.exit(1);
 }
 
-function postJson(urlStr: string, body: any, bearerToken?: string): Promise<any> {
+function postJson(urlStr: string, body: any, bearerToken?: string, extraHeaders: Record<string, string> = {}): Promise<any> {
   return new Promise((resolve) => {
     const u = new URL(urlStr);
     const data = JSON.stringify(body);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Content-Length': String(Buffer.byteLength(data))
+      'Content-Length': String(Buffer.byteLength(data)),
+      ...extraHeaders
     };
     if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
 

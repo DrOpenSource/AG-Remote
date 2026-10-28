@@ -6,6 +6,7 @@ import { AntigravityAdapter } from '../adapter-antigravity/index.ts';
 import { LsBridge } from '../adapter-antigravity/ls-bridge.ts';
 import { SessionManager } from '../core/session-manager.ts';
 import { RemoteServer } from '../server/index.ts';
+import type { RelayPhone } from '../server/http-server.ts';
 import { PairingManager, type PairingInfo } from '../pairing/manager.ts';
 import { QRCode } from '../pairing/qr.ts';
 import { RelayHost, type RelayStatus } from '../relay-host/relay-host.ts';
@@ -80,44 +81,68 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       : `Antigravity Phone Remote Control (Linked to Hub on :${port})`;
   };
 
-  const requireHost = (): boolean => {
-    if (isHost) return true;
-    vscode.window.showInformationMessage('AG-Remote: Run this in the window that hosts the server (status bar shows the port).');
-    return false;
+  // Pairing state lives in the host window. Any window can act on it: the host directly, the others
+  // over loopback. A null result means the host couldn't be reached.
+  const notReachable = () => vscode.window.showWarningMessage('AG-Remote: Could not reach the AG-Remote server window. Try again in a few seconds.');
+  const hostRelayPhones = async (): Promise<RelayPhone[] | 'off' | null> => {
+    if (isHost) return relayHost ? relayHost.pairedPhones() : 'off';
+    const res = await postHubJson(port, '/api/hub/relay-phones', {});
+    if (!res) return null;
+    return Array.isArray(res.phones) ? res.phones : 'off';
+  };
+  const hostUnpairPhone = async (pub: string): Promise<boolean> => {
+    if (isHost) {
+      if (!relayHost) return false;
+      await relayHost.revoke(pub);
+      return true;
+    }
+    return (await postHubJson(port, '/api/hub/relay-unpair', { pub }))?.ok === true;
+  };
+  const hostUnpairAll = async (): Promise<{ relay: boolean } | null> => {
+    if (isHost) return { relay: await unpairAllHere() };
+    const res = await postHubJson(port, '/api/hub/unpair-all', {});
+    return res?.ok ? { relay: !!res.relay } : null;
+  };
+  const unpairAllHere = async (): Promise<boolean> => {
+    pairingManager?.revokeAllPairings();
+    if (!relayHost) return false;
+    await relayHost.revokeAll();
+    return true;
   };
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ag-remote.showPairingQr', async () => {
+      const phones = await hostRelayPhones();
+      const paired = Array.isArray(phones) ? phones : [];
       if (isHost && pairingManager) {
         const relayPairUrl = relayHost ? await relayHost.createPairingUrl() : undefined;
-        showPairingPanel(vscode, { relayPairUrl, wifi: wifiOn ? pairingManager.createPairingSession() : undefined });
+        showPairingPanel(vscode, { relayPairUrl, wifi: wifiOn ? pairingManager.createPairingSession() : undefined, paired });
         return;
       }
       if (relayOn) {
         // The relay connection lives in the host window; ask it (over loopback) for a QR.
         const res = await postHubJson(port, '/api/hub/relay-pair', {});
         if (res?.url) {
-          showPairingPanel(vscode, { relayPairUrl: res.url });
+          showPairingPanel(vscode, { relayPairUrl: res.url, paired });
           return;
         }
       }
       vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
     }),
     vscode.commands.registerCommand('ag-remote.revokePairings', async () => {
-      if (!requireHost() || !pairingManager) return;
-      pairingManager.revokeAllPairings();
-      if (relayHost) await relayHost.revokeAll();
-      vscode.window.showInformationMessage(relayHost
+      const result = await hostUnpairAll();
+      if (!result) return notReachable();
+      vscode.window.showInformationMessage(result.relay
         ? 'AG-Remote: All phones unpaired (Wi-Fi and relay). Old QR codes no longer work; pair again to reconnect.'
         : 'AG-Remote: All active phone pairings revoked. Generated new secret token.');
     }),
     vscode.commands.registerCommand('ag-remote.managePhones', async () => {
-      if (!requireHost()) return;
-      if (!relayHost) {
+      const phones = await hostRelayPhones();
+      if (phones === null) return notReachable();
+      if (phones === 'off') {
         vscode.window.showInformationMessage('AG-Remote: Wi-Fi pairings share one token; use "Revoke All Pairings" to remove them.');
         return;
       }
-      const phones = relayHost.pairedPhones();
       if (phones.length === 0) {
         vscode.window.showInformationMessage('AG-Remote: No phones are paired through the relay.');
         return;
@@ -129,7 +154,7 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       if (!pick) return;
       const confirm = await vscode.window.showWarningMessage(`Unpair "${pick.label}"? It will need a new QR code to connect again.`, { modal: true }, 'Unpair');
       if (confirm !== 'Unpair') return;
-      await relayHost.revoke(pick.pub);
+      if (!(await hostUnpairPhone(pick.pub))) return notReachable();
       vscode.window.showInformationMessage(`AG-Remote: "${pick.label}" unpaired.`);
     }),
     vscode.commands.registerCommand('ag-remote.restartServer', async () => {
@@ -172,6 +197,14 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     isHost = true;
     sm.registry.register(identity());
     if (relayOn) await startRelay(sm, srv);
+    srv.setHostControl({
+      unpairAll: unpairAllHere,
+      ...(relayHost && {
+        relayPairUrl: () => relayHost!.createPairingUrl(),
+        relayPhones: () => relayHost!.pairedPhones(),
+        unpairRelayPhone: (pub: string) => relayHost!.revoke(pub)
+      })
+    });
     showStatus();
     return true;
   };
@@ -191,7 +224,6 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       });
       rh.start();
       relayHost = rh;
-      srv.setRelayPairing(() => rh.createPairingUrl());
     } catch (err: any) {
       vscode.window.showWarningMessage(`AG-Remote: Relay could not start (${err?.message || err}). Wi-Fi pairing still works.`);
     }
@@ -289,18 +321,19 @@ export async function deactivate(): Promise<void> {
  * Relay QR (any network) when the relay is on, plus the Wi-Fi PIN/QR when direct mode is on.
  * The relay QR's #fragment is a one-time secret, so it is drawn but not printed as text.
  */
-function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; wifi?: PairingInfo }) {
+function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; wifi?: PairingInfo; paired?: RelayPhone[] }) {
   const panel = vscode.window.createWebviewPanel(
     'agRemotePairing',
     'Pair Phone - AG-Remote',
     vscode.ViewColumn.Beside,
-    { enableScripts: false }
+    // Command links only, no scripts: the "Manage" link opens the unpair picker.
+    { enableScripts: false, enableCommandUris: ['ag-remote.managePhones'] }
   );
 
   const { relayPairUrl, wifi } = opts;
   if (relayPairUrl) {
     const relayQr = QRCode.toSvg(QRCode.generateMatrix(relayPairUrl));
-    panel.webview.html = relayPanelHtml(relayQr, wifi);
+    panel.webview.html = relayPanelHtml(relayQr, wifi, opts.paired || []);
     return;
   }
   if (!wifi) return;
@@ -375,8 +408,17 @@ function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: str
 </html>`;
 }
 
-function relayPanelHtml(relayQrSvg: string, wifi?: PairingInfo): string {
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paired: RelayPhone[]): string {
   const pin = wifi ? `${wifi.pairingCode.slice(0, 3)} ${wifi.pairingCode.slice(3)}` : '';
+  // Phone names come from the phone, so they are escaped.
+  const pairedHtml = paired.length === 0
+    ? '<p>No phones paired through the relay yet.</p>'
+    : `<ul>${paired.map((p) => `<li><strong>${escapeHtml(p.name || 'Phone')}</strong> <span>paired ${escapeHtml(new Date(p.pairedAt).toLocaleString())}</span></li>`).join('')}</ul>
+    <p><a href="command:ag-remote.managePhones">Unpair a phone…</a></p>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -417,6 +459,10 @@ function relayPanelHtml(relayQrSvg: string, wifi?: PairingInfo): string {
       max-width: 420px;
     }
     .pin { font-family: monospace; font-size: 22px; letter-spacing: 4px; color: #38bdf8; font-weight: 800; }
+    .paired ul { list-style: none; padding: 0; margin: 0 auto 8px auto; max-width: 420px; }
+    .paired li { font-size: 13px; padding: 4px 0; }
+    .paired li span { color: #64748b; font-size: 11px; }
+    .paired a { color: #818cf8; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -433,6 +479,10 @@ function relayPanelHtml(relayQrSvg: string, wifi?: PairingInfo): string {
     <p>Phone on the same Wi-Fi as this PC? You can also open <strong>${wifi.url.replace(/\/pair\?t=.*$/, '')}</strong> and type this PIN:</p>
     <div class="pin">${pin}</div>
   </div>` : ''}
+  <div class="wifi paired">
+    <p><strong>Paired phones</strong></p>
+    ${pairedHtml}
+  </div>
 </body>
 </html>`;
 }

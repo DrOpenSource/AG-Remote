@@ -13,6 +13,21 @@ export interface ServerOptions {
   pwaDir?: string;
 }
 
+export interface RelayPhone {
+  pub: string;
+  name: string;
+  pairedAt: number;
+}
+
+/** Pairing actions only the host window can perform. Relay ones are absent when the relay is off. */
+export interface HostControl {
+  relayPairUrl?: () => Promise<string | null>;
+  relayPhones?: () => RelayPhone[];
+  unpairRelayPhone?: (pub: string) => Promise<void>;
+  /** Unpairs every phone (Wi-Fi and relay); resolves true if relay phones were included. */
+  unpairAll?: () => Promise<boolean>;
+}
+
 export function resolvePwaDirectory(explicitDir?: string): string {
   const candidates: string[] = [];
   if (explicitDir) {
@@ -101,11 +116,11 @@ export class RemoteServer {
     });
   }
 
-  private relayPairing: (() => Promise<string | null>) | null = null;
+  private hostControl: HostControl = {};
 
-  /** Set by the host window when the relay is on, so linked windows can show its pairing QR. */
-  public setRelayPairing(fn: (() => Promise<string | null>) | null): void {
-    this.relayPairing = fn;
+  /** Set by the host window, so linked windows can pair, list and unpair phones through it. */
+  public setHostControl(control: HostControl): void {
+    this.hostControl = control;
   }
 
   public getPort(): number {
@@ -291,18 +306,40 @@ export class RemoteServer {
         }
         const isAuthenticated = token ? this.sessionManager.auth.verifyToken(token, clientIp) : false;
 
-        if (!isLoopback && !isAuthenticated) {
+        // IDE windows call these from Node, which sends no Origin. A browser always does, so a web page
+        // the user happens to have open can't reach the hub through loopback.
+        if (req.headers.origin || (!isLoopback && !isAuthenticated)) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Unauthorized: Loopback or valid token required for hub' }));
           return;
         }
 
-        // Relay QR for a linked IDE window. It carries a pairing secret, so this PC only, never a token holder.
-        if (req.method === 'POST' && url.pathname === '/api/hub/relay-pair') {
-          const pairingUrl = isLoopback && this.relayPairing ? await this.relayPairing() : null;
-          res.writeHead(pairingUrl ? 200 : 404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-          res.end(JSON.stringify(pairingUrl ? { url: pairingUrl } : { error: 'Relay is not enabled' }));
-          return;
+        // Pairing control for linked IDE windows. These hand out or remove pairings, so this PC only,
+        // never a token holder.
+        const control = this.hostControl;
+        const sendJson = (status: number, payload: unknown) => {
+          res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(payload));
+        };
+        const pairingPaths = ['/api/hub/relay-pair', '/api/hub/relay-phones', '/api/hub/relay-unpair', '/api/hub/unpair-all'];
+        if (req.method === 'POST' && pairingPaths.includes(url.pathname)) {
+          if (!isLoopback) return sendJson(403, { error: 'Only IDE windows on this PC can manage pairing' });
+          if (url.pathname === '/api/hub/unpair-all') {
+            if (!control.unpairAll) return sendJson(404, { error: 'Not available' });
+            return sendJson(200, { ok: true, relay: await control.unpairAll() });
+          }
+          if (!control.relayPairUrl || !control.relayPhones || !control.unpairRelayPhone) {
+            return sendJson(404, { error: 'Relay is not enabled' });
+          }
+          if (url.pathname === '/api/hub/relay-pair') {
+            const pairingUrl = await control.relayPairUrl();
+            return pairingUrl ? sendJson(200, { url: pairingUrl }) : sendJson(404, { error: 'Relay is not enabled' });
+          }
+          if (url.pathname === '/api/hub/relay-phones') return sendJson(200, { phones: control.relayPhones() });
+          const body = await this.readJsonBody(req);
+          if (typeof body?.pub !== 'string') return sendJson(400, { error: 'Body must contain pub' });
+          await control.unpairRelayPhone(body.pub);
+          return sendJson(200, { ok: true });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/hub/register') {

@@ -36,7 +36,8 @@ A version may not be released until every box here is ticked for it. Copy this l
 - [ ] `Antigravity Remote: Copy Diagnostics` output looks right on both PCs.
 
 **Release**
-- [ ] Commit, tag `vX.Y.Z`, push; GitHub release with the VSIX attached.
+- [ ] Release branch and pull request (version bump + changelog); CI green; 👤 owner merges. `main` is protected: every change goes through a PR with all 9 checks passing, for everyone including admins.
+- [ ] Tag `vX.Y.Z` on the merge commit; GitHub release with the VSIX built from it attached.
 - [ ] 👤 Publish the same VSIX to Open VSX and the VS Code Marketplace.
 - [ ] 👤 If `src/pwa/` changed: `cd relay && npx wrangler deploy`, then confirm the live site serves the new app version.
 - [ ] Check both listings show the new version, and the GitHub release asset matches the published file (SHA-256).

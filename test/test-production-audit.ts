@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import http from 'http';
 import { QRCode, Ecc } from '../src/pairing/qr.ts';
@@ -175,7 +176,24 @@ async function run() {
   // -----------------------------------------------------------------------------
   console.log('\n[Suite 4] Server Pre-Flight Camera Probe & PWA Headers');
 
-  const adapter = new AntigravityAdapter(process.cwd());
+  // Fixture chat history with two conversations, so discovery and switching don't depend on the
+  // machine's real ~/.gemini history (CI machines have none).
+  const historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-audit-history-'));
+  const fixtureConversation = (id: string, request: string, ageMs: number) => {
+    const logs = path.join(historyDir, id, '.system_generated', 'logs');
+    fs.mkdirSync(logs, { recursive: true });
+    const file = path.join(logs, 'transcript.jsonl');
+    fs.writeFileSync(file, [
+      { step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: `<USER_REQUEST>${request}</USER_REQUEST>` },
+      { step_index: 1, type: 'PLANNER_RESPONSE', tool_calls: [{ name: 'run_command', args: { Cwd: historyDir, CommandLine: 'npm test' } }] }
+    ].map(l => JSON.stringify(l)).join('\n') + '\n');
+    const when = new Date(Date.now() - ageMs);
+    fs.utimesSync(file, when, when);
+  };
+  fixtureConversation('aaaaaaaa-1111-2222-3333-444444444444', 'Add a parser test', 0);
+  fixtureConversation('bbbbbbbb-1111-2222-3333-444444444444', 'Fix the build script', 60_000);
+
+  const adapter = new AntigravityAdapter(historyDir, { brainDir: historyDir }, { lsBridge: null });
   const sessionMgr = new SessionManager(adapter);
   const server = new RemoteServer(sessionMgr, { port: 49299, host: '127.0.0.1' });
   const pm = new PairingManager(sessionMgr.auth, 49299);
@@ -268,6 +286,7 @@ async function run() {
   assert(switchRes.status === 200 && switchRes.body.status === 'switched', `Successfully switched target session to ${switchTarget.id}`);
 
   await server.stop();
+  fs.rmSync(historyDir, { recursive: true, force: true });
 
   // -----------------------------------------------------------------------------
   // Test Summary

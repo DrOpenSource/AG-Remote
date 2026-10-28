@@ -2,17 +2,21 @@ import fs from 'fs';
 import path from 'path';
 import { dataDir } from '../core/data-dir.ts';
 import { generateIdentity, exportIdentity, importIdentity, newRoomId } from '../pwa/e2e.js';
+import { generateVapidKeys, type PushSub, type VapidKeys } from './web-push.ts';
 
 export interface PhoneRecord {
   pub: string;
   name: string;
   pairedAt: number;
+  /** Set when the phone turned on notifications. */
+  push?: PushSub;
 }
 
 interface SavedState {
   room: string;
   identity: { pub: string; jwk: JsonWebKey };
   phones: PhoneRecord[];
+  vapid?: VapidKeys;
 }
 
 /**
@@ -24,6 +28,7 @@ interface SavedState {
 export class RelayStore {
   public room = '';
   public identity: any = null;
+  public vapid!: VapidKeys;
   private phones = new Map<string, PhoneRecord>();
   private readonly file: string;
 
@@ -39,6 +44,13 @@ export class RelayStore {
       store.identity = await importIdentity(saved.identity, { extractable: true });
       store.phones = new Map((saved.phones || []).map((p) => [p.pub, p]));
       if (!/^[A-Za-z0-9_-]{22}$/.test(store.room)) throw new Error('bad room');
+      if (!saved.vapid) {
+        // relay.json from before notifications existed: add a push key, keep everything else.
+        store.vapid = generateVapidKeys();
+        await store.save();
+      } else {
+        store.vapid = saved.vapid;
+      }
     } catch (_) {
       // Missing or unreadable: start fresh. Phones paired to a lost identity must pair again.
       await store.reset();
@@ -50,6 +62,7 @@ export class RelayStore {
   async reset(): Promise<void> {
     this.room = newRoomId();
     this.identity = await generateIdentity({ extractable: true });
+    this.vapid = generateVapidKeys();
     this.phones.clear();
     await this.save();
   }
@@ -69,6 +82,16 @@ export class RelayStore {
     return had;
   }
 
+  /** Stores or clears a phone's push subscription. False if the phone isn't paired (any more). */
+  async setPush(pub: string, push: PushSub | null): Promise<boolean> {
+    const phone = this.phones.get(pub);
+    if (!phone) return false;
+    if (push) phone.push = push;
+    else delete phone.push;
+    await this.save();
+    return true;
+  }
+
   list(): PhoneRecord[] {
     return [...this.phones.values()];
   }
@@ -77,7 +100,8 @@ export class RelayStore {
     const state: SavedState = {
       room: this.room,
       identity: await exportIdentity(this.identity),
-      phones: this.list()
+      phones: this.list(),
+      vapid: this.vapid
     };
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     // Write then rename, so a crash never leaves a half-written key file.

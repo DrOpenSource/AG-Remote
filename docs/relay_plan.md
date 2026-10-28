@@ -17,7 +17,7 @@ User's phone (any network) ──── HTTPS ────┘
 - **Extension transport:** a second transport beside `src/server/` that dials the relay outbound and speaks the same JSON messages the phone uses today, so `SessionManager`, multi-window tabs and approvals are reused unchanged. Setting: relay / Wi-Fi / both.
 - **Pairing:** the QR opens `https://remote.taqnik.in/p/<room>#<key>`. The `#fragment` never reaches the server. This replaces the 6-digit PIN for relay mode. Paired phones can be revoked from the IDE.
 - **End-to-end encryption (required):** phone and extension encrypt every message with the pairing key (WebCrypto, AES-GCM; consider an ECDH exchange so the QR secret is only used once). The relay sees ciphertext only and cannot read code or prompts or approve commands. Without this, a relay bug or breach = remote command execution on users' laptops.
-- **Push notifications (later):** HTTPS allows Web Push ("Antigravity needs approval") while the phone is locked. The push carries no content.
+- **Push notifications (built 2026-10-28):** Web Push over the relay page when the agent needs approval or finishes, unless the phone app is on screen. The PC signs (VAPID key in relay.json) and encrypts (RFC 8291) each push itself; the payload is only the event kind and workspace name. Android verified live; iPhone (Home Screen app, iOS 16.4+) pending.
 
 ## Risks and open questions
 

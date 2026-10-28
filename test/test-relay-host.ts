@@ -9,6 +9,8 @@ import { handlePhoneApi } from '../src/server/api.ts';
 import { RelayHost } from '../src/relay-host/relay-host.ts';
 import { RelayStore } from '../src/relay-host/relay-store.ts';
 import { PhoneE2E, generateIdentity } from '../src/pwa/e2e.js';
+import crypto from 'crypto';
+import { encryptPayload, vapidAuthorization, generateVapidKeys } from '../src/relay-host/web-push.ts';
 
 console.log('='.repeat(75));
 console.log('🧪 RELAY TRANSPORT (EXTENSION SIDE) TEST SUITE (PHASE 3)');
@@ -176,6 +178,8 @@ async function runTests() {
   const net = new FakeNet();
   const statuses: string[] = [];
   const pairedNames: string[] = [];
+  const pushes: { endpoint: string; payload: any }[] = [];
+  let pushResult: 'sent' | 'gone' | 'failed' = 'sent';
   const relayStore = await RelayStore.load(dir);
   const host = new RelayHost({
     relayUrl: 'https://relay.example/',
@@ -184,6 +188,10 @@ async function runTests() {
     onStatus: (s) => statuses.push(s),
     onPaired: (p) => pairedNames.push(p.name),
     WebSocketImpl: net.impl(),
+    sendPushImpl: async (sub, payload) => {
+      pushes.push({ endpoint: sub.endpoint, payload });
+      return pushResult;
+    },
   });
   const baseListeners = sm.listenerCount('adapter_event');
   host.start();
@@ -227,6 +235,70 @@ async function runTests() {
   assert(evt?.event?.type === 'status_changed' && evt.event.status === 'generating', 'adapter events are pushed as {k:"evt"}');
   const plain = net.hostFrames.join('\n');
   assert(!plain.includes('status_changed') && !plain.includes('generating'), 'event content is encrypted on the wire');
+
+  console.log('\n[4b] Notifications');
+  const keyRes = await a.request('GET', '/api/push/key');
+  assert(keyRes?.status === 200 && keyRes.body?.key === relayStore.vapid.publicKey && Buffer.from(keyRes.body.key, 'base64url').length === 65, 'phone gets the PC\'s push (VAPID) public key');
+  const ua = crypto.createECDH('prime256v1');
+  const uaKeys = { p256dh: ua.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') };
+  const evil = await a.request('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://evil.example/x', keys: uaKeys } });
+  assert(evil?.status === 400 && !relayStore.get(a.phone.identity.pub)?.push, 'subscription to a non-push-service URL is refused (PC never posts to arbitrary URLs)');
+  const endpoint = 'https://fcm.googleapis.com/fcm/send/test-endpoint';
+  const sub = await a.request('POST', '/api/push/subscribe', { subscription: { endpoint, keys: uaKeys, expirationTime: null } });
+  assert(sub?.status === 200 && relayStore.get(a.phone.identity.pub)?.push?.endpoint === endpoint, 'subscription stored for this phone');
+  assert((await RelayStore.load(dir)).get(a.phone.identity.pub)?.push?.endpoint === endpoint, 'subscription saved to relay.json');
+  assert(!('push' in host.pairedPhones()[0]), 'phone list for the IDE does not expose the subscription');
+
+  await a.request('POST', '/api/push/visible', { visible: true });
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap1' } } as any);
+  await sleep(100);
+  assert(pushes.length === 0, 'no push while the phone app is on screen');
+  await a.request('POST', '/api/push/visible', { visible: false });
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap2' } } as any);
+  await until(() => pushes.length === 1);
+  assert(pushes[0]?.endpoint === endpoint && pushes[0].payload.kind === 'approval' && pushes[0].payload.url === `/p/${relayStore.room}`, 'approval needed: push sent when the app is in the background');
+  assert(!JSON.stringify(pushes[0].payload).includes('ap2'), 'push payload carries no approval details');
+  sm.emit('adapter_event', { type: 'status_changed', status: 'generating' } as any);
+  sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
+  await until(() => pushes.length === 2);
+  assert(pushes[1]?.payload.kind === 'done', 'task finished (generating -> idle): push sent');
+  sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
+  await sleep(100);
+  assert(pushes.length === 2, 'idle -> idle sends nothing');
+  pushResult = 'gone';
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap3' } } as any);
+  await until(() => !relayStore.get(a.phone.identity.pub)?.push);
+  assert(!relayStore.get(a.phone.identity.pub)?.push, 'subscription the push service says is gone is forgotten');
+  pushResult = 'sent';
+  await a.request('POST', '/api/push/subscribe', { subscription: { endpoint, keys: uaKeys } });
+  const off = await a.request('POST', '/api/push/unsubscribe', {});
+  assert(off?.status === 200 && !relayStore.get(a.phone.identity.pub)?.push, 'phone can turn notifications off');
+
+  // Encryption (RFC 8291) and signing (RFC 8292), checked from the phone's and push service's side.
+  const plaintext = '{"kind":"approval"}';
+  const body = encryptPayload({ endpoint, keys: uaKeys }, Buffer.from(plaintext));
+  const salt = body.subarray(0, 16);
+  const idlen = body.readUInt8(20);
+  const asPublic = body.subarray(21, 21 + idlen);
+  const shared = ua.computeSecret(asPublic);
+  const keyInfo = Buffer.concat([Buffer.from('WebPush: info\0'), Buffer.from(uaKeys.p256dh, 'base64url'), asPublic]);
+  const ikm = Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.from(uaKeys.auth, 'base64url'), keyInfo, 32));
+  const cek = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+  const nonce = Buffer.from(crypto.hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+  const ct = body.subarray(21 + idlen);
+  const decipher = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
+  decipher.setAuthTag(ct.subarray(ct.length - 16));
+  const opened = Buffer.concat([decipher.update(ct.subarray(0, ct.length - 16)), decipher.final()]);
+  assert(body.readUInt32BE(16) === 4096 && opened.toString() === plaintext + '\x02', 'payload decrypts on the phone side (aes128gcm)');
+  const vapid = generateVapidKeys();
+  const auth = vapidAuthorization(endpoint, vapid, 'https://relay.example');
+  const [, jwt, k] = auth.match(/^vapid t=([^,]+), k=(.+)$/)!;
+  const [h, c, sig] = jwt.split('.');
+  const claims = JSON.parse(Buffer.from(c, 'base64url').toString());
+  const pub = Buffer.from(k, 'base64url');
+  const verifyKey = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') }, format: 'jwk' });
+  const sigOk = crypto.verify('sha256', Buffer.from(`${h}.${c}`), { key: verifyKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(sig, 'base64url'));
+  assert(sigOk && claims.aud === 'https://fcm.googleapis.com' && claims.exp > Date.now() / 1000 && claims.sub === 'https://relay.example', 'VAPID JWT is signed by the PC key, scoped to the push service');
 
   console.log('\n[5] Unpairing');
   const b = await makePhone(net, room);

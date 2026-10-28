@@ -160,5 +160,5 @@ Legend: ✅ do today (verified path) · 🟡 do today after a short live probe �
 | 14 | Contract + real tests, isolated log dir, replace mock-trap suites | assert message shapes; opt-in live smoke test | ✅ |
 | 15 | Real-phone verification of PIN UX, header/feed sync | needs the user's phone | 🟡 (needs you, ~10 min) |
 | 16 | LAN-exposure first-run consent, portable paths, build step | Phase 6.0 hardening | ⬜ |
-| 17 | Push notification when agent is waiting | needs a service worker push channel | ⬜ |
+| 17 | Push notification when agent is waiting | Web Push over the relay (approval needed, task finished); Android verified live 2026-10-28, iPhone pending | ✅ |
 | 18 | Streaming instead of polling (`StreamAgentStateUpdates`) | optional optimization | ⬜ |

@@ -145,11 +145,13 @@
     if (state === 'ready') {
       pairingModal.classList.add('hidden');
       resyncState();
+      pushOnReady();
       return;
     }
     if (state === 'unpaired') {
       updateStatus('disconnected', 'Not paired');
       showRelayPairing();
+      dropPushSubscription();
       return;
     }
     const labels = {
@@ -166,14 +168,119 @@
 
   /** Relay pairing happens only by scanning a QR code, so the dialog explains that instead of asking for a PIN. */
   function showRelayPairing(error) {
-    pairHint.textContent = 'Scan the QR code from AG-Remote on your PC (click AG-Remote in the IDE status bar). It works on any network.';
+    // A Home Screen app can't be opened by scanning (the camera opens the browser), and on iPhone it
+    // may not share the browser's storage. There, pasting the QR's link pairs instead.
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    pairHint.textContent = standalone
+      ? 'Point your camera at the QR code from AG-Remote on your PC, press and hold the link it shows, choose Copy Link, and paste it here.'
+      : 'Scan the QR code from AG-Remote on your PC (click AG-Remote in the IDE status bar). It works on any network.';
     pinLabel.classList.add('hidden');
-    tokenInput.classList.add('hidden');
-    btnSaveToken.classList.add('hidden');
+    tokenInput.classList.toggle('hidden', !standalone);
+    btnSaveToken.classList.toggle('hidden', !standalone);
+    if (standalone) {
+      tokenInput.removeAttribute('maxlength');
+      tokenInput.setAttribute('inputmode', 'url');
+      tokenInput.placeholder = 'Paste the pairing link';
+    }
     btnCancelPair.classList.toggle('hidden', !(relay && relay.isReady()));
     if (error) showPairError(error);
     else pairError.classList.add('hidden');
     pairingModal.classList.remove('hidden');
+  }
+
+  // Notifications (relay only: phones allow them on HTTPS pages only). The PC sends a push when the
+  // agent needs an approval or finishes, unless this page is on screen. See src/relay-host/web-push.ts.
+  const btnNotify = document.getElementById('btnNotify');
+  const isIos = /iPhone|iPad/.test(navigator.userAgent || '');
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+  async function currentPushSubscription() {
+    if (!pushSupported) return null;
+    const reg = await navigator.serviceWorker.ready;
+    return reg.pushManager.getSubscription();
+  }
+
+  function setBell(on) {
+    btnNotify.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btnNotify.setAttribute('aria-label', on ? 'Notifications are on' : 'Turn on notifications');
+  }
+
+  function reportVisibility() {
+    if (relay && relay.isReady()) api('POST', '/api/push/visible', { visible: document.visibilityState === 'visible' }).catch(() => {});
+  }
+
+  /** Each connect: tell the PC whether we're on screen, and re-send our subscription in case it lost it. */
+  async function pushOnReady() {
+    reportVisibility();
+    try {
+      const sub = Notification.permission === 'granted' ? await currentPushSubscription() : null;
+      setBell(!!sub);
+      if (sub) await api('POST', '/api/push/subscribe', { subscription: sub.toJSON() });
+    } catch (_) {}
+  }
+
+  async function dropPushSubscription() {
+    try {
+      const sub = await currentPushSubscription();
+      if (sub) await sub.unsubscribe();
+    } catch (_) {}
+    if (btnNotify) setBell(false);
+  }
+
+  async function enableNotifications() {
+    if (!relay || !relay.isReady()) {
+      showToast('Connect to your PC first, then turn on notifications.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showToast(permission === 'denied'
+        ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
+        : 'Notifications were not turned on.');
+      return;
+    }
+    try {
+      const keyRes = await api('GET', '/api/push/key');
+      if (!keyRes.ok) throw new Error(keyRes.data?.error || 'no key');
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      // A subscription made for another PC's key can't be reused.
+      if (sub) await sub.unsubscribe();
+      const raw = atob(keyRes.data.key.replace(/-/g, '+').replace(/_/g, '/'));
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: Uint8Array.from(raw, (c) => c.charCodeAt(0))
+      });
+      const res = await api('POST', '/api/push/subscribe', { subscription: sub.toJSON() });
+      if (!res.ok) throw new Error(res.data?.error || 'subscribe failed');
+      setBell(true);
+      showToast("Notifications are on. You'll get one when the agent needs approval or finishes.");
+    } catch (err) {
+      showToast(`Could not turn on notifications (${err.message || err}).`);
+    }
+  }
+
+  async function disableNotifications() {
+    try { await api('POST', '/api/push/unsubscribe', {}); } catch (_) {}
+    await dropPushSubscription();
+    showToast('Notifications are off.');
+  }
+
+  if (relayMode && btnNotify) {
+    btnNotify.classList.remove('hidden');
+    btnNotify.addEventListener('click', () => {
+      if (!pushSupported) {
+        showToast(isIos
+          ? 'On iPhone, notifications need the app on your Home Screen: tap Share, then "Add to Home Screen", and open AG Remote from that icon.'
+          : 'This browser does not support notifications. Try Chrome.');
+        return;
+      }
+      if (btnNotify.getAttribute('aria-pressed') === 'true') {
+        showToast('Notifications are on.', { label: 'Turn off', run: disableNotifications });
+      } else {
+        enableNotifications();
+      }
+    });
   }
 
   // Tabs: one per open IDE window, each with its own conversation, status and approval.
@@ -827,6 +934,17 @@
   });
 
   async function handleTokenConnect() {
+    if (relayMode) {
+      let link = null;
+      try { link = new URL(tokenInput.value.trim()); } catch (_) {}
+      if (!link || link.origin !== window.location.origin || !/^\/p\/[A-Za-z0-9_-]{22}\/?$/.test(link.pathname) || link.hash.length < 2) {
+        showPairError('That is not a pairing link. Copy the link from the QR code on your PC.');
+        return;
+      }
+      // Same room: only the #fragment changes, and the hashchange handler reloads with the new secret.
+      window.location.href = link.href;
+      return;
+    }
     const cleanPin = tokenInput.value.replace(/[\s-]/g, '');
     if (!/^\d{6}$/.test(cleanPin)) {
       showPairError('Enter the 6-digit PIN shown on your PC.');
@@ -1009,6 +1127,7 @@
 
   // Auto-resync when phone wakes up or tab returns to view (Requirement F7: < 3s resync)
   document.addEventListener('visibilitychange', () => {
+    if (relayMode) reportVisibility();
     if (document.visibilityState === 'visible') {
       resyncState();
       if (relayMode || !ws || ws.readyState !== WebSocket.OPEN) {

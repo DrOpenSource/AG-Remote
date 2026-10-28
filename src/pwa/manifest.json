@@ -2,7 +2,7 @@
   "name": "Antigravity Remote",
   "short_name": "AG Remote",
   "description": "Phone Remote Control for Google Antigravity Agent",
-  "start_url": "/",
+  "id": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#111318",

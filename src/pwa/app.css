@@ -891,3 +891,8 @@ body[data-status="generating"] .snackbar { bottom: calc(144px + var(--safe-botto
 }
 
 .focused-tag { color: var(--md-success); font-size: 12px; font-weight: 400; }
+
+/* Notification bell: slashed when off, filled when on */
+#btnNotify .bell-on { display: none; }
+#btnNotify[aria-pressed="true"] .bell-on { display: inline; }
+#btnNotify[aria-pressed="true"] .bell-off { display: none; }

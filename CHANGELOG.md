@@ -11,6 +11,7 @@ Antigravity updates from late October 2026 replaced the agent's background progr
 - **Reads chats from the new and the old folder** (`~/.gemini/antigravity` and `~/.gemini/antigravity-ide`).
 - **Copy Diagnostics** shows which kind of agent was found, its project folder and its chat folder.
 - **Screenshots from the phone reach the agent.** The new Antigravity agent quietly ignored attached images. Each image is now saved in your project under `.ag-remote/uploads/` (ignored by git, removed after 7 days) and the message tells the agent where it is, so it opens and reads it.
+- **No more stuck "Working" and Stop button.** A conversation that ended without a reply (an error, a cancel, a closed window) could show as working forever on the phone. Working/Ready now comes from the agent itself, so it clears as soon as the agent is idle.
 - **Reminds you to reload.** After an update, the first window that starts the new version tells you to reload the others. The pairing panel now has a short "For best results" section with the same advice.
 
 ## 0.2.2: Macs with a leftover agent process

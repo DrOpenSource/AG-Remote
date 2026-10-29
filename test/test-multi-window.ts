@@ -112,7 +112,7 @@ async function run() {
     { cascadeId: 'b-new', title: 'B', workspaces: ['c:/proj/b'], lastActivity: 300 },
     { cascadeId: 'a-old', title: 'A old', workspaces: ['c:/proj/a'], lastActivity: 100 }
   ];
-  const stub: any = { listConversations: async () => convs, findPending: async () => null };
+  const stub: any = { listConversations: async () => convs, findPending: async () => null, isRunning: () => null };
   const adapter = new AntigravityAdapter('C:\\proj\\a', { brainDir: brain }, { lsBridge: stub, livePollMs: 60000 });
   const seen: any[] = [];
   adapter.onEvent(e => seen.push(e));

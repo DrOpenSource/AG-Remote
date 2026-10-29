@@ -36,6 +36,8 @@ interface FakeState {
   acceptInteraction: boolean;
   /** Answer prompts that carry images with an error, like an IDE build without image support. */
   rejectImages: boolean;
+  /** Live run status the server reports for CASCADE (GetCascadeTrajectoryResponse.status); undefined = not reported. */
+  runStatus?: string;
   /** Folder the fake IDE's conversation list assigns to CASCADE. */
   workspace: string;
   calls: Array<{ method: string; body: any; token: string | undefined }>;
@@ -75,7 +77,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     if (method === 'GetCascadeTrajectory') {
       if (parsed.cascadeId !== CASCADE) { res.end('{}'); return; }
-      res.end(JSON.stringify({ trajectory: { trajectoryId: 'traj-1', cascadeId: CASCADE, steps: state.steps } }));
+      res.end(JSON.stringify({ trajectory: { trajectoryId: 'traj-1', cascadeId: CASCADE, steps: state.steps }, ...(state.runStatus ? { status: state.runStatus } : {}) }));
     } else if (method === 'HandleCascadeUserInteraction') {
       if (state.acceptInteraction) {
         const i = parsed.interaction?.stepIndex;
@@ -355,6 +357,53 @@ async function run() {
   assert(((only as any).config.brainDirs || []).length === 1, 'an explicit single folder (tests) reads only that folder');
   fs.rmSync(oldDir, { recursive: true, force: true });
   fs.rmSync(newDir, { recursive: true, force: true });
+
+  console.log('\n[Suite 3d] "Working" comes from the agent, not a guess from the chat file');
+  // A chat whose last line is the user's message looks "still generating" to the file-based guess,
+  // e.g. after an error or a closed window. Seen 2026-10-28: an old chat showed "Working" + Stop for good.
+  const idleBrain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-idle-'));
+  const idleLogs = path.join(idleBrain, CASCADE, '.system_generated', 'logs');
+  fs.mkdirSync(idleLogs, { recursive: true });
+  const idleTranscript = path.join(idleLogs, 'transcript.jsonl');
+  fs.writeFileSync(idleTranscript, JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>left unanswered</USER_REQUEST>' }) + '\n');
+  state.steps = [{ type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { items: [{ text: 'left unanswered' }] } }];
+  state.workspace = idleBrain;
+
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === false, 'bridge: IDLE from the agent means not running');
+  state.runStatus = 'CASCADE_RUN_STATUS_BUSY';
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === true, 'bridge: BUSY means running');
+  state.runStatus = undefined;
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === null, 'bridge: no status reported means unknown');
+
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  const idleAdapter = new AntigravityAdapter(idleBrain, { brainDir: idleBrain }, { lsBridge: bridge, livePollMs: 60000 });
+  await idleAdapter.connect();
+  assert((await idleAdapter.getSnapshot()).status === 'idle', 'agent says IDLE: the phone shows Ready, not Working, even though the file ends with a question');
+  state.runStatus = 'CASCADE_RUN_STATUS_RUNNING';
+  await (idleAdapter as any).pollLive();
+  assert((await idleAdapter.getSnapshot()).status === 'generating', 'agent says RUNNING: the phone shows Working');
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  await (idleAdapter as any).pollLive();
+  assert((await idleAdapter.getSnapshot()).status === 'idle', 'back to IDLE: Working clears without any new message');
+  await idleAdapter.disconnect();
+
+  // Without a live status (no agent connection), the file guess still works, but not forever
+  const { SessionWatcher: GuessWatcher } = await import('../src/adapter-antigravity/session-watcher.ts');
+  const { defaultConfig: guessDefaults } = await import('../src/adapter-antigravity/config.ts');
+  const guess = new GuessWatcher(idleBrain, { ...guessDefaults, brainDir: idleBrain, brainDirs: [idleBrain] });
+  await guess.setActiveConversationId(CASCADE);
+  assert(guess.getSnapshot().status === 'generating', 'no live status, fresh unanswered message: guessed as working');
+  const longAgo = new Date(Date.now() - 20 * 60 * 1000);
+  fs.utimesSync(idleTranscript, longAgo, longAgo);
+  await guess.setActiveConversationId(CASCADE);
+  assert(guess.getSnapshot().status === 'idle', 'no live status, unanswered for 20 minutes: not shown as working');
+  guess.stop();
+  state.runStatus = undefined;
+  fs.rmSync(idleBrain, { recursive: true, force: true });
 
   const audit = fs.existsSync(auditLogger.getLogPath()) ? fs.readFileSync(auditLogger.getLogPath(), 'utf8') : '';
   assert(!audit.includes(TOKEN), 'csrf token never written to the audit log');

@@ -140,6 +140,12 @@ export class AntigravityAdapter implements IdeAdapter {
     const base = this.watcher.getSnapshot().status;
     if (!this.ls) return base;
     if (this.liveApproval) return 'awaiting_approval';
+    if (base === 'disconnected') return base;
+    // The agent's own run status beats the transcript guess, which stays "generating" for good
+    // when a chat ended on an unanswered message (error, cancel, window closed).
+    const cid = this.watcher.getActiveConversationId();
+    const running = cid ? this.ls.isRunning(cid) : null;
+    if (running !== null) return running ? 'generating' : 'idle';
     return base === 'awaiting_approval' ? 'generating' : base;
   }
 

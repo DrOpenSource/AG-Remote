@@ -4,6 +4,9 @@ import EventEmitter from 'events';
 import type { SessionSnapshot, SessionStatus, ChatMessage, Approval, AdapterEvent } from '../core/types.ts';
 import { type AdapterConfig, defaultConfig } from './config.ts';
 
+/** A chat whose last line is an unanswered user message stops counting as "generating" after this long. */
+const UNANSWERED_STALE_MS = 10 * 60 * 1000;
+
 export class SessionWatcher extends EventEmitter {
   private config: AdapterConfig;
   private currentWorkspace: string;
@@ -316,9 +319,12 @@ export class SessionWatcher extends EventEmitter {
               text,
               ts
             });
-            // If user input is the last step, agent is likely generating
+            // If user input is the last step, agent is likely generating, unless the file has been quiet
+            // for a while (a chat that ended on an error or a closed window). Used only without a live status.
             if (i === lines.length - 1) {
-              isGenerating = true;
+              let quietMs = 0;
+              try { quietMs = Date.now() - fs.statSync(this.activeTranscriptPath!).mtimeMs; } catch (_) {}
+              isGenerating = quietMs < UNANSWERED_STALE_MS;
             }
           } else if (step.type === 'ASK_QUESTION') {
             // Execution of ask_question clears pending ask_question approval

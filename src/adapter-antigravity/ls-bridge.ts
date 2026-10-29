@@ -314,7 +314,23 @@ export class LsBridge {
 
   public async getTrajectory(cascadeId: string): Promise<any | null> {
     const res = await this.call('GetCascadeTrajectory', { cascadeId });
+    if (res) this.runStatus.set(cascadeId, typeof res.status === 'string' ? res.status : undefined);
     return res?.trajectory ?? null;
+  }
+
+  /** Last run status the server reported per conversation (CASCADE_RUN_STATUS_IDLE / RUNNING / BUSY / CANCELING). */
+  private runStatus = new Map<string, string | undefined>();
+
+  /**
+   * Whether the agent is working on this conversation, from the server's own run status as of the last
+   * trajectory read (the live poll reads it every second). null when the server didn't say.
+   */
+  public isRunning(cascadeId: string): boolean | null {
+    const status = this.runStatus.get(cascadeId);
+    if (!status) return null;
+    if (/RUNNING|BUSY|CANCELING/.test(status)) return true;
+    if (/IDLE/.test(status)) return false;
+    return null;
   }
 
   public async findPending(cascadeId: string): Promise<LiveInteraction | null> {

@@ -2,7 +2,7 @@
   "name": "ag-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your Antigravity agent from your phone: approve or deny commands, send prompts and screenshots, stop runs and get notified, on any network with end-to-end encryption.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "dr-opensource",
   "icon": "assets/icon.png",
   "author": "Dr. Shubham Kashyap",

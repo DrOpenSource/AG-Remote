@@ -24,6 +24,7 @@
   const promptForm = document.getElementById('promptForm');
   const promptInput = document.getElementById('promptInput');
   const btnSend = document.getElementById('btnSend');
+  const lastActiveLine = document.getElementById('lastActive');
   const btnAttach = document.getElementById('btnAttach');
   const attachInput = document.getElementById('attachInput');
   const attachTray = document.getElementById('attachTray');
@@ -324,7 +325,7 @@
 
   function tabFor(id) {
     const key = id || '';
-    if (!tabs.has(key)) tabs.set(key, { name: 'Antigravity', status: 'disconnected', messages: [], approval: null, title: '' });
+    if (!tabs.has(key)) tabs.set(key, { name: 'Antigravity', status: 'disconnected', messages: [], approval: null, title: '', lastActivity: 0 });
     return tabs.get(key);
   }
 
@@ -363,6 +364,7 @@
     t.status = snap.status;
     t.messages = Array.isArray(snap.messages) ? snap.messages : [];
     t.approval = snap.pendingApproval || null;
+    t.lastActivity = Number(snap.lastActivity) || 0;
   }
 
   async function resyncState() {
@@ -419,7 +421,7 @@
 
   function renderActiveTab() {
     const t = tabFor(activeTabId);
-    renderSnapshot({ status: t.status, messages: t.messages, pendingApproval: t.approval });
+    renderSnapshot({ status: t.status, messages: t.messages, pendingApproval: t.approval, lastActivity: t.lastActivity });
     renderTabBar();
     updateActiveSessionLabel();
   }
@@ -531,10 +533,12 @@
         }
       }
       t.messages.push(event.message);
+      t.lastActivity = Math.max(t.lastActivity || 0, Number(event.message.ts) || Date.now());
       if (visible) appendChatMessage(event.message);
     } else if (event.type === 'approval_requested') {
       t.approval = event.approval;
       t.status = 'awaiting_approval';
+      t.lastActivity = Date.now();
       if (visible) {
         showApproval(event.approval);
         updateStatus('awaiting_approval');
@@ -544,6 +548,7 @@
       }
     } else if (event.type === 'status_changed') {
       t.status = event.status;
+      if (event.status !== 'disconnected') t.lastActivity = Date.now();
       if (event.status !== 'awaiting_approval') t.approval = null;
       if (visible) {
         updateStatus(event.status);
@@ -554,6 +559,7 @@
       t.messages = [];
       t.approval = null;
       t.title = '';
+      t.lastActivity = 0; // the new conversation's messages bring their own times
       if (visible) {
         renderSnapshot({ status: t.status, messages: [], pendingApproval: null });
         updateActiveSessionLabel();
@@ -561,12 +567,40 @@
     } else if (event.type === 'adapter_error') {
       if (visible) showToast(event.error);
     }
+    if (visible) updateLastActive(t.status, t.lastActivity);
     renderTabBar();
   }
 
   // 4. UI Rendering Functions
+
+  // "Last active 3 h ago" when the shown conversation is idle and has been quiet this long
+  const QUIET_MS = 10 * 60 * 1000;
+
+  function formatAgo(ms) {
+    const minutes = Math.floor(ms / 60000);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
+  function updateLastActive(status, lastActivity) {
+    const quietFor = lastActivity ? Date.now() - lastActivity : 0;
+    const show = status === 'idle' && quietFor >= QUIET_MS;
+    lastActiveLine.classList.toggle('hidden', !show);
+    if (show) lastActiveLine.textContent = `Last active ${formatAgo(quietFor)}`;
+  }
+
+  // Keeps "… ago" current while the phone app is open
+  setInterval(() => {
+    const t = tabs.get(activeTabId || '');
+    if (t) updateLastActive(t.status, t.lastActivity);
+  }, 60000);
+
   function renderSnapshot(snapshot) {
     updateStatus(snapshot.status);
+    updateLastActive(snapshot.status, snapshot.lastActivity);
 
     // The empty state lives inside the feed, so keep it when clearing.
     chatFeed.replaceChildren(emptyState);

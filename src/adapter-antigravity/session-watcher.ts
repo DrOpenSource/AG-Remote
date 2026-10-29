@@ -434,10 +434,13 @@ export class SessionWatcher extends EventEmitter {
         this.emit('event', { type: 'status_changed', status: newStatus } as AdapterEvent);
       }
 
+      let lastActivity: number | undefined;
+      try { lastActivity = fs.statSync(this.activeTranscriptPath!).mtimeMs; } catch (_) {}
       this.lastSnapshot = {
         status: newStatus,
         messages,
-        pendingApproval
+        pendingApproval,
+        lastActivity
       };
     } catch (err: any) {
       this.emit('event', { type: 'adapter_error', error: err?.message || 'Error reading session state' } as AdapterEvent);

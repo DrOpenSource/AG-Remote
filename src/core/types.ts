@@ -39,6 +39,8 @@ export interface SessionSnapshot {
   status: SessionStatus;
   messages: ChatMessage[];
   pendingApproval: Approval | null;
+  /** ms since epoch the shown conversation last changed; the phone shows "Last active …" when it's quiet. */
+  lastActivity?: number;
 }
 
 export type AdapterEvent =

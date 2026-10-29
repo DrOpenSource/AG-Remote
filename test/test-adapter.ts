@@ -30,6 +30,8 @@ async function runTests() {
   fs.mkdirSync(logs, { recursive: true });
   fs.writeFileSync(path.join(logs, 'transcript.jsonl'),
     JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>add a parser test</USER_REQUEST>' }) + '\n');
+  const threeHoursAgo = new Date(Date.now() - 3 * 3600 * 1000);
+  fs.utimesSync(path.join(logs, 'transcript.jsonl'), threeHoursAgo, threeHoursAgo);
   const adapter = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });
 
   console.log('\n[Suite 1] Lifecycle & Contract Compliance');
@@ -45,6 +47,8 @@ async function runTests() {
   assert(['idle', 'generating', 'awaiting_approval', 'disconnected'].includes(snapshot.status), `Snapshot status is valid (${snapshot.status})`);
   assert(Array.isArray(snapshot.messages), `Messages is an array (length: ${snapshot.messages.length})`);
   assert(snapshot.messages.length > 0, `Captured conversation messages (count: ${snapshot.messages.length})`);
+  assert(typeof snapshot.lastActivity === 'number' && Math.abs(snapshot.lastActivity - threeHoursAgo.getTime()) < 2000,
+    'Snapshot carries when the conversation last changed (for the phone\'s "Last active" line)');
 
   console.log('\n[Suite 2] Security Invariants (Mismatched / Unsafe Actions)');
   

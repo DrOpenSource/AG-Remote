@@ -36,7 +36,8 @@ A version may not be released until every box here is ticked for it. Copy this l
 - [ ] `Antigravity Remote: Copy Diagnostics` output looks right on both PCs.
 
 **Release**
-- [ ] Commit, tag `vX.Y.Z`, push; GitHub release with the VSIX attached.
+- [ ] Release branch and pull request (version bump + changelog); CI green; 👤 owner merges. `main` is protected: every change goes through a PR with all 9 checks passing, for everyone including admins.
+- [ ] Tag `vX.Y.Z` on the merge commit; GitHub release with the VSIX built from it attached.
 - [ ] 👤 Publish the same VSIX to Open VSX and the VS Code Marketplace.
 - [ ] 👤 If `src/pwa/` changed: `cd relay && npx wrangler deploy`, then confirm the live site serves the new app version.
 - [ ] Check both listings show the new version, and the GitHub release asset matches the published file (SHA-256).
@@ -71,14 +72,14 @@ A version may not be released until every box here is ticked for it. Copy this l
 **Goal:** make "test first, test everywhere" possible before adding features, and close the one open question from 0.2.0.
 
 **Tests first**
-- [ ] `0.2.3-T1` CI workflow runs `npm test` on Windows, macOS and Linux for every push and pull request (GitHub Actions is free for public repos).
-- [ ] `0.2.3-T2` Browser tests for the phone app: pick a tool (👤 approve: Playwright as a dev-only dependency, or headless Chrome/Edge driven over CDP with no dependency). First tests: page loads, pairing screen shows, a fake host's messages render, the attach tray adds and removes an image.
+- [x] `0.2.3-T1` CI workflow runs `npm test` on Windows, macOS and Linux for every push and pull request (GitHub Actions is free for public repos). (#1, PR #18; it immediately caught two tests that only passed on the owner's PC because they read the real `~/.gemini` history.)
+- [x] `0.2.3-T2` Browser tests for the phone app with Playwright (dev-only, approved). 10 tests: pairing screen, project title, file-name chips, no HTML execution, approve, deny with note, prompt, attach tray, image compression, stop. (#2, PR #18)
 - [ ] `0.2.3-T3` Test: image prompt sent with the `media` field when the IDE rejects `images` (fake language server).
 - [ ] `0.2.3-T4` Test: setting `agRemote.imagesAsFiles` always sends images as saved files.
 
 **Build**
-- [ ] `0.2.3-B1` Add `.github/workflows/test.yml` (3 operating systems, Node 20 and 24).
-- [ ] `0.2.3-B2` Add the browser test harness and `npm run test:browser`.
+- [x] `0.2.3-B1` `.github/workflows/test.yml`: 3 operating systems × Node 22 and 24, relay suite, browser tests, VSIX build with a 150 KB budget.
+- [x] `0.2.3-B2` Browser test harness (`test/browser/`, fake agent with a control API) and `npm run test:browser`.
 - [ ] `0.2.3-B3` Live check (👤 owner): send a screenshot, ask "what do you see?". Record the result in NOTES.md.
 - [ ] `0.2.3-B4` Only if B3 shows the agent ignores inline images: add the `media` fallback and the `imagesAsFiles` setting.
 

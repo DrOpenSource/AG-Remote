@@ -1,4 +1,6 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import type { SessionSnapshot, AdapterEvent } from '../src/core/types.ts';
 import { auditLogger } from '../src/core/logger.ts';
@@ -21,7 +23,14 @@ async function runTests() {
     }
   }
 
-  const adapter = new AntigravityAdapter(process.cwd());
+  // A temporary chat-history folder with one conversation, so the result doesn't depend on the
+  // machine's real ~/.gemini history (CI machines have none).
+  const brain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-adapter-'));
+  const logs = path.join(brain, '11111111-2222-3333-4444-555555555555', '.system_generated', 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, 'transcript.jsonl'),
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>add a parser test</USER_REQUEST>' }) + '\n');
+  const adapter = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });
 
   console.log('\n[Suite 1] Lifecycle & Contract Compliance');
   assert(adapter.name === 'antigravity', 'Adapter name is "antigravity"');
@@ -109,6 +118,7 @@ async function runTests() {
   await adapter.disconnect();
   const disconnectedSnapshot = await adapter.getSnapshot();
   assert(disconnectedSnapshot.status === 'disconnected', 'Status transitioned to "disconnected"');
+  fs.rmSync(brain, { recursive: true, force: true });
 
   console.log('\n' + '='.repeat(75));
   console.log(`RESULTS: ${passed} passed, ${failed} failed`);

@@ -47,7 +47,8 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
 
   const config = vscode.workspace.getConfiguration('agRemote');
   const port = config.get<number>('port', 49222);
-  const transport = config.get<string>('transport', 'both');
+  // Relay-only by default: the local server then accepts this PC only. Wi-Fi/Tailscale with a PIN is opt-in.
+  const transport = config.get<string>('transport', 'relay');
   const relayOn = transport === 'both' || transport === 'relay';
   const wifiOn = transport !== 'relay';
   const relayUrl = config.get<string>('relayUrl') || 'https://remote.taqnik.in';

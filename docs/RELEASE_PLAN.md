@@ -90,6 +90,61 @@ A version may not be released until every box here is ticked for it. Copy this l
 
 ---
 
+## 0.2.5: Safer pairing (patch)
+
+**Goal:** close the pairing-code risk before adding features. Someone who sees or guesses the 6-character code, or photographs the QR code, must not be able to pair a phone on their own.
+
+**Already merged (PR #22):** relay-only by default (`agRemote.transport` = `"relay"`, the local server listens on this PC only), 10 pairing-code lookups a minute per IP, 60 relay connections a minute per IP. The relay part is live.
+
+**Tests first**
+- [x] `0.2.5-T1` Pairing tests (`test/test-e2e.ts` [9]): a phone with the right secret waits and is not saved; the secret is used up while it waits; allow pairs it; deny, a 2-minute timeout, or the phone leaving refuses it and saves nothing; a request can be answered once; both sides compute the same 4-digit check code; a "wait" message forged by the relay pairs nothing.
+- [x] `0.2.5-T2` Extension relay tests (`test/test-relay-host.ts`): the IDE is asked with name and check code, sees no keys, and a denied phone is not written to `relay.json`.
+- [x] `0.2.5-T3` Loopback route tests (`test/test-hub-and-cdp.ts`): any window can list waiting phones and answer them; web pages can't.
+
+**Build**
+- [x] `0.2.5-B1` `HostE2E` asks before saving a new phone (`pair-wait` message, `pendingApprovals`, `answerApproval`, `checkCode`); the extension always turns it on.
+- [x] `0.2.5-B2` Pairing panel shows waiting phones with Allow / Deny (any window, over loopback); the hosting window shows a notification when its panel isn't on screen; after a deny the panel shows a fresh QR code.
+- [x] `0.2.5-B3` Phone shows "On your PC, click Allow" with its check code and waits up to 2 min 15 s; clear messages for denied and timed out. Cache version bumped (app.js v10, shell v14).
+
+**Manual checks for this version**
+- [ ] `0.2.5-V1` Pair by QR: phone shows the code, PC shows the same code, Allow pairs it.
+- [ ] `0.2.5-V2` Pair by the 6-character code, from the panel in a second window (not the hosting one).
+- [ ] `0.2.5-V3` Deny: the phone says it was not allowed and the panel shows a new QR code.
+- [ ] `0.2.5-V4` Wait 2 minutes without answering: the phone says nobody answered; nothing is added to the paired list.
+- [ ] `0.2.5-V5` A phone that was already paired reconnects without being asked.
+- [ ] `0.2.5-V6` Wi-Fi rows of the core checklist with `agRemote.transport` set to `"both"`.
+
+**Release gate**
+
+Before building the VSIX
+- [ ] All new tests were committed before (or with) the code they test, and failed without it.
+- [ ] `npm test` passes locally.
+- [ ] CI passes on Windows, macOS and Linux.
+- [ ] `relay` tests pass (`src/pwa/` changed).
+- [ ] No new runtime dependency; any new dev dependency was approved.
+
+Build
+- [ ] Version bumped in `package.json`; `CHANGELOG.md` entry written for users.
+- [ ] `npm run package` builds the VSIX with no warnings; size noted (budget 150 KB).
+- [ ] VSIX contents checked: icon, `dist/extension.cjs`, `dist/pwa/*`, no source maps, notes or tests.
+
+Verify the built VSIX (manual, real devices)
+- [ ] 👤 Install the VSIX in Antigravity, reload every window.
+- [ ] 👤 `cd relay && npx wrangler deploy` first (the phone app changed), and confirm the live site serves app.js v10.
+- [ ] 👤 Core regression checklist on Android (and iPhone if available), relay and Wi-Fi.
+- [ ] 👤 The manual checks above pass.
+
+Release
+- [ ] Pull request with CI green; 👤 owner merges.
+- [ ] Tag `v0.2.5` on the merge commit; GitHub release with the tested VSIX attached.
+- [ ] 👤 Publish the same VSIX to Open VSX and the VS Code Marketplace.
+- [ ] Both listings show 0.2.5 and the GitHub asset matches the published file (SHA-256).
+- [ ] Update `TRACKER.md` and this plan.
+
+**Release** - [ ] `0.2.5-R1` Release gate complete.
+
+---
+
 ## 0.3.0: Voice input and any file
 
 **Goal:** the two biggest input gaps against competitors.
@@ -240,8 +295,10 @@ A version may not be released until every box here is ticked for it. Copy this l
 | Version | Theme | Status |
 |---|---|---|
 | 0.2.2 | Mac fix, diagnostics, live pairing panel, smaller VSIX | ✅ Released 2026-10-28 |
-| 0.2.3 | CI on 3 OSes, browser tests, attachments confirmed | ⬜ Next |
-| 0.3.0 | Voice input, any file | ⬜ |
+| 0.2.3 | CI on 3 OSes, browser tests, attachments confirmed | ✅ Released 2026-10-29 |
+| 0.2.4 | Short pairing codes, QR opens the installed app | ✅ Released 2026-10-29 |
+| 0.2.5 | Safer pairing: "Allow this phone?", relay-only default, relay limits | 🟡 Ready for testing |
+| 0.3.0 | Voice input, any file | ⬜ Next |
 | 0.3.1 | Readable replies, listing polish | ⬜ |
 | 0.4.0 | Diffs, safe auto-approve | ⬜ |
 | 0.4.1 | History and search, model and mode | ⬜ |

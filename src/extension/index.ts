@@ -137,15 +137,20 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       const phones = await hostRelayPhones();
       const paired = Array.isArray(phones) ? phones : [];
       if (isHost && pairingManager) {
-        const relayPairUrl = relayHost ? await relayHost.createPairingUrl() : undefined;
-        showPairingPanel(vscode, { relayPairUrl, wifi: wifiOn ? pairingManager.createPairingSession() : undefined, paired });
+        const relayPair = relayHost ? await relayHost.createPairingUrl() : undefined;
+        showPairingPanel(vscode, {
+          relayPairUrl: typeof relayPair === 'string' ? relayPair : relayPair?.url,
+          relayCode: typeof relayPair === 'object' ? relayPair?.code : undefined,
+          wifi: wifiOn ? pairingManager.createPairingSession() : undefined,
+          paired
+        });
         return;
       }
       if (relayOn) {
         // The relay connection lives in the host window; ask it (over loopback) for a QR.
         const res = await postHubJson(port, '/api/hub/relay-pair', {});
         if (res?.url) {
-          showPairingPanel(vscode, { relayPairUrl: res.url, paired });
+          showPairingPanel(vscode, { relayPairUrl: res.url, relayCode: res.code, paired });
           return;
         }
       }
@@ -363,9 +368,9 @@ export async function deactivate(): Promise<void> {
  */
 // One pairing panel at a time. Its paired-phones list is redrawn when phones pair or unpair.
 let pairingPanel: vscodeTypes.WebviewPanel | null = null;
-let pairingPanelState: { relayQr?: string; wifi?: PairingInfo; paired: RelayPhone[] } | null = null;
+let pairingPanelState: { relayQr?: string; relayCode?: string; wifi?: PairingInfo; paired: RelayPhone[] } | null = null;
 
-function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; wifi?: PairingInfo; paired?: RelayPhone[] }) {
+function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: string; relayCode?: string; wifi?: PairingInfo; paired?: RelayPhone[] }) {
   if (!opts.relayPairUrl && !opts.wifi) return;
   if (pairingPanel) {
     pairingPanel.reveal(vscode.ViewColumn.Beside);
@@ -384,6 +389,7 @@ function showPairingPanel(vscode: typeof vscodeTypes, opts: { relayPairUrl?: str
   }
   pairingPanelState = {
     relayQr: opts.relayPairUrl ? QRCode.toSvg(QRCode.generateMatrix(opts.relayPairUrl)) : undefined,
+    relayCode: opts.relayCode,
     wifi: opts.wifi,
     paired: opts.paired || []
   };
@@ -401,8 +407,8 @@ function updatePairingPanelPhones(paired: RelayPhone[]) {
 
 function renderPairingPanel() {
   if (!pairingPanel || !pairingPanelState) return;
-  const { relayQr, wifi, paired } = pairingPanelState;
-  if (relayQr) pairingPanel.webview.html = relayPanelHtml(relayQr, wifi, paired);
+  const { relayQr, relayCode, wifi, paired } = pairingPanelState;
+  if (relayQr) pairingPanel.webview.html = relayPanelHtml(relayQr, relayCode, wifi, paired);
   else if (wifi) pairingPanel.webview.html = wifiPanelHtml(wifi);
 }
 
@@ -495,7 +501,7 @@ const TIPS_CSS = `
     .tips ul { margin: 0; padding-left: 18px; }
     .tips li { color: #94a3b8; font-size: 12px; margin-bottom: 8px; }`;
 
-function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paired: RelayPhone[]): string {
+function relayPanelHtml(relayQrSvg: string, relayCode: string | undefined, wifi: PairingInfo | undefined, paired: RelayPhone[]): string {
   const pin = wifi ? `${wifi.pairingCode.slice(0, 3)} ${wifi.pairingCode.slice(3)}` : '';
   // Phone names come from the phone, so they are escaped.
   const pairedHtml = paired.length === 0
@@ -555,6 +561,11 @@ function relayPanelHtml(relayQrSvg: string, wifi: PairingInfo | undefined, paire
   <div class="qr-box">
     ${relayQrSvg}
   </div>
+  ${relayCode ? `
+  <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 12px 16px; margin: 0 auto 16px auto; max-width: 280px;">
+    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">Pairing Code</div>
+    <div style="font-family: monospace; font-size: 26px; letter-spacing: 4px; color: #38bdf8; font-weight: 800;">${escapeHtml(relayCode.slice(0, 3))} ${escapeHtml(relayCode.slice(3))}</div>
+  </div>` : ''}
   <p style="font-size: 11px; color: #64748b;">
     End-to-end encrypted. The relay only forwards scrambled messages; it can't read your code or prompts, or approve anything.
   </p>

@@ -1,9 +1,11 @@
 import { Room } from './room.ts';
+import { CodeStore } from './codes.ts';
 
-export { Room };
+export { Room, CodeStore };
 
 export interface Env {
   ROOM: DurableObjectNamespace<Room>;
+  CODES: DurableObjectNamespace<CodeStore>;
   ASSETS: Fetcher;
 }
 
@@ -47,6 +49,31 @@ export default {
       }
 
       return env.ROOM.get(env.ROOM.idFromName(roomId)).fetch(request);
+    }
+
+    // POST /code — register a short pairing code (called by the extension).
+    if (request.method === 'POST' && url.pathname === '/code') {
+      try {
+        const body = (await request.json()) as { room?: string; fragment?: string };
+        if (typeof body.room !== 'string' || typeof body.fragment !== 'string') {
+          return new Response('Bad body', { status: 400 });
+        }
+        if (!ROOM_ID.test(body.room)) return new Response('Bad room id', { status: 400 });
+        const store = env.CODES.get(env.CODES.idFromName('global'));
+        const code = await store.store(body.room, body.fragment);
+        return Response.json({ code }, { headers: { 'Cache-Control': 'no-store' } });
+      } catch {
+        return new Response('Bad request', { status: 400 });
+      }
+    }
+
+    // GET /code/<CODE> — resolve a short pairing code (called by the phone PWA).
+    const codeMatch = url.pathname.match(/^\/code\/([A-Za-z0-9]{6})$/);
+    if (codeMatch && request.method === 'GET') {
+      const store = env.CODES.get(env.CODES.idFromName('global'));
+      const result = await store.lookup(codeMatch[1]);
+      if (!result) return Response.json({ error: 'not found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     // /p/<room> is the phone app; the room and #secret are read by the page itself.

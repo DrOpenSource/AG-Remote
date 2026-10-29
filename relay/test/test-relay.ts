@@ -162,6 +162,31 @@ async function runTests() {
   assert(/javascript/.test(e2eJs.headers.get('content-type') || '') && (await e2eJs.text()).includes('class PhoneE2E'), 'e2e.js served as JavaScript (the module the phone imports)');
   assert((await fetch(`${BASE}/api/state`)).status === 404, 'local-server API paths do not exist on the relay');
 
+  console.log('\n[1c] Short pairing codes');
+  const codeBad = await fetch(`${BASE}/code`, { method: 'POST', body: 'invalid json' });
+  assert(codeBad.status === 400, 'POST /code with invalid json returns 400');
+  const testRoom = newRoom();
+  const testFragment = 'test-secret-fragment-12345';
+  const codeRes = await fetch(`${BASE}/code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room: testRoom, fragment: testFragment }),
+  });
+  assert(codeRes.status === 200, 'POST /code stores code successfully');
+  const codeJson = (await codeRes.json()) as { code: string };
+  assert(typeof codeJson.code === 'string' && codeJson.code.length === 6, 'generated code is 6 characters');
+
+  const lookupRes = await fetch(`${BASE}/code/${codeJson.code}`);
+  assert(lookupRes.status === 200, 'GET /code/<code> resolves successfully');
+  const lookupJson = (await lookupRes.json()) as { room: string; fragment: string };
+  assert(lookupJson.room === testRoom && lookupJson.fragment === testFragment, 'resolved room and fragment match');
+
+  const secondLookup = await fetch(`${BASE}/code/${codeJson.code}`);
+  assert(secondLookup.status === 404, 'second lookup returns 404 (single-use code)');
+
+  const unknownLookup = await fetch(`${BASE}/code/ZZZZZZ`);
+  assert(unknownLookup.status === 404, 'unknown code returns 404');
+
   console.log('\n[2] Join and presence');
   const room = newRoom();
   const host = await connect(room, 'host');

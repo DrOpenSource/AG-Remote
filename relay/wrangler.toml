@@ -17,7 +17,15 @@ run_worker_first = true
 name = "ROOM"
 class_name = "Room"
 
+[[durable_objects.bindings]]
+name = "CODES"
+class_name = "CodeStore"
+
 # SQLite-backed class: required for Durable Objects on the free plan.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CodeStore"]

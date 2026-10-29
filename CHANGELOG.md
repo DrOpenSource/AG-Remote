@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4: Unified pairing code and direct PWA launch
+
+- **Short pairing codes on any network.** A clean 6-character code (e.g. `K7A 9P2`) appears alongside the QR code. You can type it into your phone to pair over cellular data, remote Wi-Fi, or home Wi-Fi without scanning.
+- **QR code opens the installed PWA directly.** Scanning the pairing QR with your camera now opens directly in the installed Antigravity Remote PWA instead of a browser tab.
+- **PWA connect card improvements.** Fixed pairing input field filtering out non-digits when pasting links, and enabled seamless in-place pairing on the hosted relay.
+- **Visual branding & marketing kit.** Added hero banner and launch copy for the VS Code Marketplace and community announcements.
+
 ## 0.2.3: Works with the new Antigravity agent (agy)
 
 Antigravity updates from late October 2026 replaced the agent's background program and moved where chats are saved, so the phone connected but showed no conversation. Both the old and the new setup now work, the same way on Windows, macOS and Linux.

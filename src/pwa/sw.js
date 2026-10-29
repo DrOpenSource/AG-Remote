@@ -1,5 +1,5 @@
 // AG-Remote Service Worker (Cache static shell for offline PWA installation)
-const CACHE_NAME = 'ag-remote-shell-v13';
+const CACHE_NAME = 'ag-remote-shell-v14';
 const ASSETS = [
   '/',
   '/index.html',

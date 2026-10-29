@@ -178,6 +178,7 @@ async function runTests() {
   const net = new FakeNet();
   const statuses: string[] = [];
   const pairedNames: string[] = [];
+  const asked: { id: string; name: string; code: string }[] = [];
   const pushes: { endpoint: string; payload: any }[] = [];
   let pushResult: 'sent' | 'gone' | 'failed' = 'sent';
   const relayStore = await RelayStore.load(dir);
@@ -187,6 +188,7 @@ async function runTests() {
     sessionManager: sm,
     onStatus: (s) => statuses.push(s),
     onPaired: (p) => pairedNames.push(p.name),
+    onApprovalNeeded: (r) => asked.push(r),
     WebSocketImpl: net.impl(),
     sendPushImpl: async (sub, payload) => {
       pushes.push({ endpoint: sub.endpoint, payload });
@@ -205,7 +207,13 @@ async function runTests() {
   const { origin, room, secret } = parsePairUrl(pairUrl);
   assert(origin === 'https://relay.example' && room === relayStore.room && secret.length === 43, 'pairing URL is https://<relay>/p/<room>#<secret>');
   const a = await makePhone(net, room);
-  const hostPub = await a.phone.pair(secret, 'Test phone');
+  const aPairing = a.phone.pair(secret, 'Test phone');
+  await until(() => asked.length === 1);
+  assert(asked[0]?.name === 'Test phone' && /^\d{4}$/.test(asked[0].code), 'IDE is asked to allow the new phone, with its name and check code');
+  assert(host.pendingApprovals().length === 1 && host.pairedPhones().length === 0, 'waiting phone is listed but not paired yet');
+  assert(!JSON.stringify(host.pendingApprovals()).includes(a.phone.identity.pub), 'waiting list for the IDE shows no keys');
+  assert(host.answerApproval(asked[0].id, true), 'IDE allows it');
+  const hostPub = await aPairing;
   await a.phone.connect();
   await until(() => host.connectedPhones() === 1);
   assert(hostPub === relayStore.identity.pub && pairedNames[0] === 'Test phone', 'phone pairs; IDE is notified with its name');
@@ -312,7 +320,17 @@ async function runTests() {
 
   console.log('\n[5] Unpairing');
   const b = await makePhone(net, room);
-  await b.phone.pair(await host.createPairingUrl().then((u) => parsePairUrl(typeof u === 'string' ? u : u.url).secret), 'Second phone');
+  const newSecret = () => host.createPairingUrl().then((u) => parsePairUrl(typeof u === 'string' ? u : u.url).secret);
+  const no = await makePhone(net, room);
+  const noPairing = no.phone.pair(await newSecret(), 'Not mine').catch((e) => e?.code);
+  await until(() => asked.length === 2);
+  host.answerApproval(asked[1].id, false);
+  assert((await noPairing) === 'denied' && host.pairedPhones().length === 1, 'denied phone is refused and not saved');
+  assert(!(await RelayStore.load(dir)).get(no.phone.identity.pub), 'denied phone is not in relay.json');
+  const bPairing = b.phone.pair(await newSecret(), 'Second phone');
+  await until(() => asked.length === 3);
+  host.answerApproval(asked[2].id, true);
+  await bPairing;
   await b.phone.connect();
   await until(() => host.connectedPhones() === 2);
   await host.revoke(b.phone.identity.pub);

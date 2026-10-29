@@ -13,6 +13,7 @@ import {
   randomBytes,
   PAIRING_TTL_MS,
   MAX_PAIRING_FAILURES,
+  checkCode,
 } from '../src/pwa/e2e.js';
 
 console.log('='.repeat(75));
@@ -105,9 +106,11 @@ interface Setup {
   hostGot: { peerId: string; obj: any }[];
   ready: string[];
   clock: { t: number };
+  asked: any[];
+  paired: any[];
 }
 
-async function makeHost(opts: { identity?: any; registry?: MemoryPhoneRegistry; room?: string; relay?: FakeRelay } = {}): Promise<Setup> {
+async function makeHost(opts: { identity?: any; registry?: MemoryPhoneRegistry; room?: string; relay?: FakeRelay; confirm?: boolean; approvalTimeoutMs?: number } = {}): Promise<Setup> {
   const relay = opts.relay || new FakeRelay();
   const room = opts.room || newRoomId();
   const hostIdentity = opts.identity || (await generateIdentity({ extractable: true }));
@@ -115,6 +118,8 @@ async function makeHost(opts: { identity?: any; registry?: MemoryPhoneRegistry; 
   const hostGot: { peerId: string; obj: any }[] = [];
   const ready: string[] = [];
   const clock = { t: 1_000_000 };
+  const asked: any[] = [];
+  const paired: any[] = [];
   const host = new HostE2E({
     room,
     identity: hostIdentity,
@@ -122,16 +127,20 @@ async function makeHost(opts: { identity?: any; registry?: MemoryPhoneRegistry; 
     send: relay.hostSend,
     onMessage: (peerId: string, obj: any) => hostGot.push({ peerId, obj }),
     onPhoneReady: (peerId: string) => ready.push(peerId),
+    onPaired: (record: any) => paired.push(record),
+    ...(opts.confirm && { onApprovalNeeded: (req: any) => asked.push(req) }),
+    ...(opts.approvalTimeoutMs && { approvalTimeoutMs: opts.approvalTimeoutMs }),
     now: () => clock.t,
   });
   relay.host = host;
-  return { relay, room, host, hostIdentity, registry, hostGot, ready, clock };
+  return { relay, room, host, hostIdentity, registry, hostGot, ready, clock, asked, paired };
 }
 
 async function makePhone(s: Setup, hostPub: string | null = null, identity?: any) {
   const id = s.relay.newPhoneId();
   const got: any[] = [];
   const rejects: string[] = [];
+  const waits: number[] = [];
   const phone = new PhoneE2E({
     room: s.room,
     identity: identity || (await generateIdentity()),
@@ -139,9 +148,15 @@ async function makePhone(s: Setup, hostPub: string | null = null, identity?: any
     send: s.relay.phoneSender(id),
     onMessage: (obj: any) => got.push(obj),
     onReject: (r: string) => rejects.push(r),
+    onPairWait: () => waits.push(Date.now()),
   });
   s.relay.phones.set(id, phone);
-  return { id, phone, got, rejects };
+  return { id, phone, got, rejects, waits };
+}
+
+/** Starts pairing without waiting for the answer; the promise is checked later. */
+function pairLater(p: PhoneE2E, secret: string, name: string) {
+  return p.pair(secret, name).then((v) => ({ ok: true, v, code: '' }), (e) => ({ ok: false, v: null, code: e?.code }));
 }
 
 async function runTests() {
@@ -338,6 +353,66 @@ async function runTests() {
   await yAgain.phone.connect();
   await settle();
   assert(yAgain.phone.ready && s8.ready.includes(yAgain.id), 'paired phone reconnects after the laptop restarts (saved key + list)');
+
+  console.log('\n[9] The PC allows each new phone');
+  const code = await checkCode(phoneId.pub);
+  assert(/^\d{4}$/.test(code) && code === (await checkCode(phoneId.pub)), 'check code is 4 digits and the same every time for one phone');
+  assert(code !== (await checkCode((await generateIdentity()).pub)) || code !== (await checkCode((await generateIdentity()).pub)), 'other phones get other check codes');
+
+  const s9 = await makeHost({ confirm: true });
+  const sec9 = await s9.host.startPairing();
+  const w = await makePhone(s9);
+  const wResult = pairLater(w.phone, sec9, 'Pixel 9');
+  await until(() => s9.asked.length === 1 && w.waits.length === 1);
+  const req = s9.asked[0];
+  assert(w.waits.length === 1, 'phone is told to wait for the PC');
+  assert(req?.name === 'Pixel 9' && req.code === (await checkCode(w.phone.identity.pub)) && typeof req.id === 'string', 'PC is asked, with the phone\'s name and check code');
+  assert(!s9.registry.get(w.phone.identity.pub) && s9.paired.length === 0, 'phone is not saved before the PC allows it');
+  assert(s9.host.pendingApprovals().length === 1 && s9.host.pendingApprovals()[0].id === req.id, 'request is listed as waiting');
+  const thief = await makePhone(s9);
+  assert(await rejectsWith(thief.phone.pair(sec9, 'thief'), 'no-pairing'), 'the code is used up while waiting: another phone cannot pair');
+  assert(s9.asked.length === 1, 'and the PC is not asked about it');
+  assert(s9.host.answerApproval(req.id, true) === true, 'allowing answers the waiting request');
+  const wDone = await wResult;
+  assert(wDone.ok && wDone.v === s9.hostIdentity.pub, 'allowed phone pairs');
+  assert(s9.registry.get(w.phone.identity.pub)?.name === 'Pixel 9' && s9.paired.length === 1, 'and is saved, and the IDE is notified');
+  assert(s9.host.pendingApprovals().length === 0 && s9.host.answerApproval(req.id, true) === false, 'a request can be answered only once');
+  await w.phone.connect();
+  assert(w.phone.ready, 'allowed phone starts a session');
+
+  const d = await makePhone(s9);
+  const dResult = pairLater(d.phone, await s9.host.startPairing(), 'Unknown');
+  await until(() => s9.asked.length === 2);
+  s9.host.answerApproval(s9.asked[1].id, false);
+  const dDone = await dResult;
+  assert(!dDone.ok && dDone.code === 'denied', 'denied phone is told "denied"');
+  assert(!s9.registry.get(d.phone.identity.pub) && s9.paired.length === 1, 'denied phone is not saved');
+  assert(await rejectsWith(d.phone.connect(), 'not-paired'), 'denied phone has no PC key to connect with');
+
+  const s10 = await makeHost({ confirm: true, approvalTimeoutMs: 300 });
+  const t = await makePhone(s10);
+  const tDone = await pairLater(t.phone, await s10.host.startPairing(), 'Slow');
+  assert(!tDone.ok && tDone.code === 'approval-timeout', 'unanswered request times out on its own');
+  assert(!s10.registry.get(t.phone.identity.pub) && s10.host.pendingApprovals().length === 0, 'timed-out phone is not saved and no longer listed');
+  assert(s10.host.answerApproval(s10.asked[0].id, true) === false, 'allowing after the timeout does nothing');
+  assert(!s10.registry.get(t.phone.identity.pub), 'still not saved');
+
+  const s11 = await makeHost({ confirm: true });
+  const g = await makePhone(s11);
+  pairLater(g.phone, await s11.host.startPairing(), 'Gone');
+  await until(() => s11.asked.length === 1);
+  s11.relay.leave(g.id);
+  await until(() => s11.host.pendingApprovals().length === 0);
+  assert(s11.host.pendingApprovals().length === 0, 'request disappears when the phone leaves');
+  assert(s11.host.answerApproval(s11.asked[0].id, true) === false && !s11.registry.get(g.phone.identity.pub), 'and allowing it afterwards saves nothing');
+
+  // The relay can send "pair-wait" itself, but that can't make a phone think it is paired.
+  const s12 = await makeHost();
+  const f = await makePhone(s12);
+  const fResult = pairLater(f.phone, toB64u(randomBytes(32)), 'forged');
+  await f.phone.handleRelay(JSON.stringify({ t: 'pair-wait' }));
+  const fDone = await fResult;
+  assert(!fDone.ok && !f.phone.hostPub, 'a forged "wait" does not pair the phone');
 }
 
 try {

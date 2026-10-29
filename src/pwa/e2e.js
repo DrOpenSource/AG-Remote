@@ -9,6 +9,7 @@
 //
 // Inner messages (the "d" text), all JSON with a "t" field:
 //   pair    phone -> host  {pub, name, mac}     mac = HMAC(secret, pairing transcript)
+//   pair-wait host -> phone {}                  secret was right; the owner is asked on the PC to allow this phone
 //   paired  host -> phone  {pub, mac}
 //   hello   phone -> host  {pub, eph}           starts a session for an already paired phone
 //   welcome host -> phone  {eph, confirm}       confirm = first sealed message, proves the host's keys
@@ -23,6 +24,7 @@ const CURVE = { name: 'ECDH', namedCurve: 'P-256' };
 const VERSION = 'ag-remote e2e v1';
 
 export const PAIRING_TTL_MS = 5 * 60 * 1000;
+export const APPROVAL_TIMEOUT_MS = 2 * 60 * 1000;
 export const MAX_PAIRING_FAILURES = 5;
 export const MAX_NAME_LENGTH = 64;
 // Larger app messages are split so every sealed frame stays under the relay's 64 KB cap.
@@ -101,6 +103,12 @@ function pairTranscript(room, phonePub, name) {
 
 function pairedTranscript(room, hostPub, phonePub) {
   return encoder.encode([VERSION, 'paired', room, hostPub, phonePub].join('|'));
+}
+
+/** Four digits the phone and the PC both show while the PC decides, so the owner can tell their phone from someone else's. */
+export async function checkCode(phonePub) {
+  const hash = await subtle.digest('SHA-256', encoder.encode([VERSION, 'check', phonePub].join('|')));
+  return String(new DataView(hash).getUint32(0) % 10000).padStart(4, '0');
 }
 
 /** Runs async jobs one at a time, in call order. Counters and decryption depend on order. */
@@ -301,6 +309,8 @@ export class HostE2E {
    * @param opts.send       (text) => void, writes one frame to the relay socket
    * @param opts.onMessage  (peerId, obj, phoneRecord) => void, app message from a phone
    * @param opts.onPhoneReady / onPhoneGone / onPaired  optional notifications
+   * @param opts.onApprovalNeeded  ({id, name, code}) => void. When set, a phone with the right secret is
+   *                        saved only after answerApproval(id, true); otherwise it is saved at once.
    */
   constructor(opts) {
     this.room = opts.room;
@@ -312,10 +322,13 @@ export class HostE2E {
     this.onPhoneGone = opts.onPhoneGone || (() => {});
     this.onPaired = opts.onPaired || (() => {});
     this.onVisible = opts.onVisible || (() => {});
+    this.onApprovalNeeded = opts.onApprovalNeeded || null;
+    this.approvalTimeoutMs = opts.approvalTimeoutMs || APPROVAL_TIMEOUT_MS;
     this.now = opts.now || Date.now;
     this.peers = new Map(); // relay peer id -> { pub, channel, ready, sendQ }
     this.inQ = new Map(); // relay peer id -> serial queue for incoming
     this.pairing = null;
+    this.waiting = new Map(); // approval id -> { peerId, name, code, finish }
   }
 
   /** Opens a one-time pairing window. Returns the secret for the QR #fragment. Replaces any earlier one. */
@@ -335,6 +348,7 @@ export class HostE2E {
     if (!frame) return Promise.resolve();
     if (frame.relay === 'peer-left' && frame.role === 'phone') {
       this.dropPeer(frame.peer);
+      for (const w of [...this.waiting.values()]) if (w.peerId === frame.peer) w.finish('gone');
       return Promise.resolve();
     }
     if (typeof frame.from !== 'string' || typeof frame.d !== 'string') return Promise.resolve();
@@ -377,11 +391,48 @@ export class HostE2E {
     }
 
     this.pairing = null;
+    if (this.onApprovalNeeded) {
+      // The secret is used up either way, so nobody else can pair while the owner decides.
+      const answer = await this.askOwner(peerId, msg.pub, name);
+      if (answer === 'gone') return;
+      if (answer !== 'allow') return this.reject(peerId, answer === 'timeout' ? 'approval-timeout' : 'denied');
+    }
     const record = { pub: msg.pub, name, pairedAt: this.now() };
     await this.phones.add(record);
     const mac = await subtle.sign('HMAC', p.key, pairedTranscript(this.room, this.identity.pub, msg.pub));
     this.sendPlain(peerId, { t: 'paired', pub: this.identity.pub, mac: toB64u(mac) });
     this.onPaired(record);
+  }
+
+  /** Resolves 'allow', 'deny', 'timeout', or 'gone' (the phone left the room). */
+  async askOwner(peerId, pub, name) {
+    const id = toB64u(randomBytes(9));
+    const code = await checkCode(pub);
+    this.sendPlain(peerId, { t: 'pair-wait' });
+    return new Promise((resolve) => {
+      let timer = null;
+      const finish = (answer) => {
+        clearTimeout(timer);
+        this.waiting.delete(id);
+        resolve(answer);
+      };
+      timer = setTimeout(() => finish('timeout'), this.approvalTimeoutMs);
+      this.waiting.set(id, { peerId, name, code, finish });
+      this.onApprovalNeeded({ id, name, code });
+    });
+  }
+
+  /** Phones that used a valid secret and wait for the owner: [{id, name, code}]. */
+  pendingApprovals() {
+    return [...this.waiting].map(([id, w]) => ({ id, name: w.name, code: w.code }));
+  }
+
+  /** Answers a waiting phone. False if it is no longer waiting (answered, timed out, or left). */
+  answerApproval(id, allow) {
+    const w = this.waiting.get(id);
+    if (!w) return false;
+    w.finish(allow ? 'allow' : 'deny');
+    return true;
   }
 
   async handleHello(peerId, msg) {
@@ -507,6 +558,7 @@ export class PhoneE2E {
    * @param opts.send       (text) => void, writes one frame to the relay socket
    * @param opts.onMessage  (obj) => void, app message from the laptop
    * @param opts.onReject / onHostLeft  optional notifications
+   * @param opts.onPairWait () => void, the secret was right and the PC is asking its owner
    */
   constructor(opts) {
     this.room = opts.room;
@@ -516,6 +568,7 @@ export class PhoneE2E {
     this.onMessage = opts.onMessage || (() => {});
     this.onReject = opts.onReject || (() => {});
     this.onHostLeft = opts.onHostLeft || (() => {});
+    this.onPairWait = opts.onPairWait || (() => {});
     this.channel = null;
     this.ready = false;
     this.pending = null; // { kind: 'pair'|'hello', resolve, reject, ... }
@@ -572,6 +625,11 @@ export class PhoneE2E {
         this.channel = null;
         this.onHostLeft();
       }
+      return;
+    }
+    // Not authenticated, so it only changes what the phone shows; pairing still needs the "paired" MAC.
+    if (msg.t === 'pair-wait') {
+      if (this.pending?.kind === 'pair') this.onPairWait();
       return;
     }
     if (msg.t === 'reject') {

@@ -37,9 +37,10 @@ If you installed 0.1.0 (publisher `ag-remote`), uninstall it first; your paired 
 
 ### 2. Pair Your Phone
 
-1. Open your phone's camera and scan the QR code displayed on your PC screen.
+1. Open your phone's camera and scan the QR code displayed on your PC screen, or type the 6-character pairing code shown under it.
 2. The web app (PWA) opens instantly in your browser:
-   - **Relay Mode (Any Network / Cellular Data)**: Pairs automatically via the URL `#fragment` secret; session keys are derived on-device with zero plaintext exposed to the relay.
+   - **Relay Mode (Any Network / Cellular Data)**: Pairs via the URL `#fragment` secret; session keys are derived on-device with zero plaintext exposed to the relay.
+   - **Allow it on your PC**: your PC asks before any new phone is paired (in the pairing panel, or as a notification). Click **Allow** only if your phone shows the same 4-digit code.
    - **Wi-Fi Mode (Local LAN, opt-in)**: Set `agRemote.transport` to `"both"` or `"wifi"` to also pair over the same Wi-Fi with the 6-digit PIN shown on your PC. Off by default because it opens a plain-HTTP server to your whole network.
 3. **Install as App (PWA)**:
    - **iOS (Safari)**: Tap Share (`⬆️`) -> **Add to Home Screen**.
@@ -62,7 +63,7 @@ Antigravity Remote works with both the older Antigravity agent (`language_server
 AG-Remote has permissions to approve terminal commands and file modifications. Security is designed into the core:
 
 1. **End-to-End Encryption (Relay Mode)**: When using the hosted relay (`remote.taqnik.in`), all traffic is encrypted on-device with AES-256-GCM and P-256 ECDH keys. The relay only forwards scrambled ciphertext frames and cannot read prompts, inspect code, or approve commands.
-2. **Single-Use Ephemeral Secrets**: Every pairing QR code contains a 256-bit cryptographically random secret in the URL fragment (`#secret`) that never reaches the server, valid for 5 minutes only. The 6-character pairing code is a shortcut: it stores that secret on the relay for up to 5 minutes so your phone can fetch it, so scanning the QR is the more private option. Code lookups are limited to 10 a minute per IP.
+2. **Single-Use Ephemeral Secrets**: Every pairing QR code contains a 256-bit cryptographically random secret in the URL fragment (`#secret`) that never reaches the server, valid for 5 minutes only. The 6-character pairing code is a shortcut: it stores that secret on the relay for up to 5 minutes so your phone can fetch it, so scanning the QR is the more private option. Code lookups are limited to 10 a minute per IP. A valid code still pairs nothing until you click **Allow** on your PC, which shows the same 4-digit check code as the phone.
 3. **Loopback-Only Visual Pairing (`/pair/view`)**: The visual pairing screen is strictly locked to loopback callers (`127.0.0.1` / `::1`) with origin filtering, preventing anyone on the same Wi-Fi network from generating pairing PINs.
 4. **Local Wi-Fi Security**: When direct Wi-Fi mode is active, the server binds to `0.0.0.0` with token authentication. Traffic on unencrypted LANs is plain HTTP; to restrict the local server to this PC, set `agRemote.host` to `127.0.0.1` (recommended when using Tailscale Serve for HTTPS).
 5. **Never Port Forward**: Never open port 49222 on your home or office router. Use the built-in encrypted relay or [Tailscale HTTPS Setup](docs/TAILSCALE_SETUP.md) for remote access.

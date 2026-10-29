@@ -133,7 +133,9 @@
     'bad-secret': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
     'no-pairing': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
     'expired': 'This QR code has expired (they last 5 minutes). Show a new one on your PC and scan it.',
-    'timeout': 'Your PC did not answer. Check that Antigravity is open, then scan a new QR code.'
+    'timeout': 'Your PC did not answer. Check that Antigravity is open, then scan a new QR code.',
+    'denied': 'Your PC did not allow this phone. If it is yours, show a new QR code on your PC and try again.',
+    'approval-timeout': 'Nobody clicked Allow on your PC within 2 minutes. Show a new QR code and try again.'
   };
 
   async function startRelay() {
@@ -166,9 +168,11 @@
       dropPushSubscription();
       return;
     }
+    if (state === 'approving') showApprovalWait(relay ? relay.checkCode : '');
     const labels = {
       'connecting': 'Connecting...',
       'pairing': 'Pairing...',
+      'approving': 'Allow on your PC',
       'waiting-host': 'PC offline',
       'offline': 'Offline',
       'room-full': 'Too many phones'
@@ -195,6 +199,19 @@
     btnCancelPair.classList.toggle('hidden', !(relay && relay.isReady()));
     if (error) showPairError(error);
     else pairError.classList.add('hidden');
+    pairingModal.classList.remove('hidden');
+  }
+
+  /** The code was right; the PC now asks its owner. Same code on both screens means it's this phone. */
+  function showApprovalWait(code) {
+    pairHint.textContent = code
+      ? `On your PC, click Allow. Your PC should show the same code: ${code}`
+      : 'On your PC, click Allow.';
+    pinLabel.classList.add('hidden');
+    tokenInput.classList.add('hidden');
+    btnSaveToken.classList.add('hidden');
+    btnCancelPair.classList.add('hidden');
+    pairError.classList.add('hidden');
     pairingModal.classList.remove('hidden');
   }
 

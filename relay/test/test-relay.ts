@@ -322,6 +322,22 @@ async function runTests() {
 
   hostWs.close();
   phoneWs.close();
+
+  // Last, so the per-IP limit it trips can't affect the sections above. Local only: against a
+  // deployed relay it would lock the tester's IP out of code lookups for a minute.
+  if (!process.env.RELAY_URL) {
+    console.log('\n[7] Per-IP limits');
+    let codeStatus = 0;
+    for (let i = 0; i < 12 && codeStatus !== 429; i++) {
+      const r = await fetch(`${BASE}/code/ZZZZZZ`);
+      await r.arrayBuffer();
+      codeStatus = r.status;
+    }
+    assert(codeStatus === 429, 'code lookups beyond 10 a minute from one IP get 429 (guessing is throttled)');
+    const fresh = await connect(newRoom(), 'phone');
+    assert(fresh.messages[0]?.relay === 'hello', 'WebSocket connections have their own budget (still allowed)');
+    fresh.close();
+  }
 }
 
 let relay: ChildProcess | null = null;

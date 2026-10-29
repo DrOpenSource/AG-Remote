@@ -109,12 +109,12 @@
             "relay"
           ],
           "enumDescriptions": [
-            "Relay for any network, plus direct Wi-Fi/Tailscale with a PIN",
-            "Only direct Wi-Fi/Tailscale with a PIN (nothing goes through the relay)",
-            "Only the relay; the local server accepts this PC only"
+            "Relay for any network, plus direct Wi-Fi/Tailscale with a PIN (opens port 49222 to your network)",
+            "Only direct Wi-Fi/Tailscale with a PIN (nothing goes through the relay; opens port 49222 to your network)",
+            "Only the relay (default); the local server accepts this PC only"
           ],
-          "default": "both",
-          "description": "How your phone reaches this PC. The relay is end-to-end encrypted: it forwards messages it cannot read."
+          "default": "relay",
+          "description": "How your phone reaches this PC. The relay (default) is end-to-end encrypted and works on any network. Choose \"both\" or \"wifi\" to also pair with a PIN over Wi-Fi/Tailscale; that opens a plain-HTTP server to everyone on the same network, so avoid it on public or office Wi-Fi."
         },
         "agRemote.relayUrl": {
           "type": "string",

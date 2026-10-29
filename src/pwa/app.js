@@ -1277,6 +1277,12 @@
               return;
             }
           }
+          if (res.status === 429) {
+            btnSaveToken.disabled = false;
+            btnSaveToken.textContent = 'Connect';
+            showPairError('Too many tries. Wait a minute, then enter the code again or scan the QR code.');
+            return;
+          }
         } catch (_) {}
 
         btnSaveToken.disabled = false;

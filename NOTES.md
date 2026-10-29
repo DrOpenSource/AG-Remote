@@ -203,3 +203,9 @@ From PRD Section 17:
 - **Hand-over:** when the host window closes, another window takes port 49222; the phone's token keeps working (live-tested).
 - **New chat RPC (not built, D-5):** `StartCascade` is in `resources/bin/language_server.exe`. Request fields include `workspaceUris`, `requestedModel`, `cascadeId`, `source`, `trajectoryType`; response returns `cascadeId`. A chat created this way runs in the background and does **not** appear in the Agent panel (owner-tested). If revisited, the first message would also need a user config (today `sendPrompt` copies the last user step's config).
 - **Claude Code is out of scope:** AG-Remote only speaks to Antigravity's language server. For Claude Code from a phone, use Claude Code's own Remote Control (`/remote-control`); untested whether it covers IDE-extension sessions.
+
+## 2026-10-29: Relay hardening and relay-only default
+
+- `agRemote.transport` now defaults to `"relay"`; the local server binds to 127.0.0.1 unless Wi-Fi is opted into. Reason: the old default opened plain HTTP on 0.0.0.0:49222 to every network the PC joined.
+- Relay Worker has a per-IP limiter (`relay/src/limiter.ts`, one Durable Object per kind+IP, fixed one-minute window, fails open): 60 WebSocket connects and 10 `/code` requests per minute, tunable in `wrangler.toml [vars]`. Chosen over the Workers rate-limit binding because that binding's free-plan availability is undocumented.
+- Open issue: `GET /code/<code>` returns the room *and the pairing secret*, and the PC accepts any phone holding the secret without asking. The rate limit slows guessing; the real fix is a confirm-on-PC step for new phones (or not storing the secret on the relay).

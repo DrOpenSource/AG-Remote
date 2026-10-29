@@ -21,10 +21,11 @@
 | **Phase 6** | **Ship-Ready Release** | Bundled VSIX (`esbuild`), loopback-only `/pair/view`, zero dependencies | Built | 🟢 **Complete** |
 | **v0.2 Relay** | **Hosted Relay & E2E Encryption** | Cloudflare DO (`remote.taqnik.in`), WebCrypto AES-GCM/ECDH, Web Push | 94 / 94 | 🟢 **Complete** |
 | **v0.2.0–0.2.2** | **Public release** | Attachments, Mac/Linux, diagnostics, live pairing panel, 221 KB VSIX; Open VSX + VS Code Marketplace; repo public | 72 / 72 (bridge) | 🟢 **Released** |
-| **v0.2.3** | **Test foundation** | CI on Windows/macOS/Linux, browser tests, attachments confirmed | – | ⬜ Next |
+| **v0.2.3** | **New Agent (agy) Support** | Per-window agy support, moved chat folders, status detection fix | Verified | 🟢 **Released** |
+| **v0.2.4** | **Unified Pairing & PWA Launch** | 6-char short codes via DO CodeStore, PWA deep linking, input fixes, hero banner | 56 / 56 (relay) | 🟢 **Released** |
 | **v0.3.0 – v0.6.0** | **Roadmap** | Voice, files, replies, diffs, safe auto-approve, history, Git, languages, own relay, Windsurf | – | ⬜ Planned, see [RELEASE_PLAN](docs/RELEASE_PLAN.md) |
 
-**Current Test Metric:** All 11 root test suites passing (230+ assertions), relay suite 49/49 passing. 100% green across all environments.
+**Current Test Metric:** All 11 root test suites passing (230+ assertions), relay suite 56/56 passing. 100% green across all environments.
 
 ---
 

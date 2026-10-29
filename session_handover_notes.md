@@ -8,9 +8,24 @@
 
 ---
 
-# ⮕ START HERE (updated 2026-10-27, read this section only, then NOTES.md §13-§14)
+# ⮕ START HERE (updated 2026-10-29 post-v0.2.4 release)
 
-## 1. Where we are
+> **CRITICAL INSTRUCTION FOR NEW SESSIONS:**  
+> **v0.2.4 is 100% COMPLETE, TESTED, TAGGED, AND RELEASED to Open VSX & VS Code Marketplace.**  
+> **DO NOT try to rebuild, re-test, or re-implement v0.2.4 features.** Start cleanly from the post-release roadmap.
+
+## 1. Current State (v0.2.4 Released)
+- **Status:** v0.2.4 is released on Open VSX (approved) and VS Code Marketplace (submitted/under review). Cloudflare Relay Worker is deployed to production at `remote.taqnik.in`.
+- **Git:** Commit `03c113b` on branch `v0.2.4/last-active`, pushed to `origin/v0.2.4/last-active`, tagged `v0.2.4`.
+- **Tests:** All 11 root test suites pass (230+ assertions), relay suite 56/56 passes.
+- **What shipped in v0.2.4:**
+  1. **Unified Pairing Code**: 6-character short pairing codes (e.g. `K7A 9P2`) via Cloudflare Workers `CodeStore` Durable Object (`POST /code`, `GET /code/:code`), enabling easy pairing across cellular data, home Wi-Fi, and remote networks without link copying.
+  2. **Direct PWA Deep Linking**: Manifest configured with `scope: "/"`, `start_url: "/"`, and `prefer_related_applications: false` so scanning QR codes opens directly in the installed PWA.
+  3. **PWA Connect Card Fixes**: Fixed numeric input filter stripping text/URLs when pasting links, and enabled seamless in-place reconnect on the hosted relay.
+  4. **Visual Assets & Marketing Kit**: Added hero banner (`assets/banner.png`), architecture diagram (`assets/architecture-diagram.svg`), and marketing launch playbook (`docs/MARKETING_KIT.md`).
+  5. **Package Size**: 604 KB VSIX (`ag-remote-0.2.4.vsix`, 17 files, 0 runtime dependencies).
+
+## 2. Where we are
 - **Working:** approve/deny (+note), prompt, stop, follow new IDE chats, QR/PIN phone pairing over Wi-Fi, Material 3 phone UI, **one tab per IDE window**, host hand-over when a window closes. All live-tested on the phone by the owner (multi-window retest passed 2026-10-27).
 - **Repo:** branch `feat/multi-window` merged into local `main` (2026-10-27). `npm test` = 9 suites green. Pushed to `origin/main` (github.com/DrOpenSource/AG-Remote) on 2026-10-27.
 - **Decisions:** D-1 LS RPC for actions; D-2 `0.0.0.0` + token/PIN; D-3 no fake text fallbacks; D-4 personal tool only; **D-5 no "New chat" from the phone** (runs hidden from the Agent panel). See NOTES.md §1.

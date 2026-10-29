@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, rankLanguageServers, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, rankLanguageServers, parseServerCommandLine, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
@@ -36,6 +36,8 @@ interface FakeState {
   acceptInteraction: boolean;
   /** Answer prompts that carry images with an error, like an IDE build without image support. */
   rejectImages: boolean;
+  /** Live run status the server reports for CASCADE (GetCascadeTrajectoryResponse.status); undefined = not reported. */
+  runStatus?: string;
   /** Folder the fake IDE's conversation list assigns to CASCADE. */
   workspace: string;
   calls: Array<{ method: string; body: any; token: string | undefined }>;
@@ -75,7 +77,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     if (method === 'GetCascadeTrajectory') {
       if (parsed.cascadeId !== CASCADE) { res.end('{}'); return; }
-      res.end(JSON.stringify({ trajectory: { trajectoryId: 'traj-1', cascadeId: CASCADE, steps: state.steps } }));
+      res.end(JSON.stringify({ trajectory: { trajectoryId: 'traj-1', cascadeId: CASCADE, steps: state.steps }, ...(state.runStatus ? { status: state.runStatus } : {}) }));
     } else if (method === 'HandleCascadeUserInteraction') {
       if (state.acceptInteraction) {
         const i = parsed.interaction?.stepIndex;
@@ -154,6 +156,28 @@ async function run() {
   const ss = 'LISTEN 0      4096       127.0.0.1:41234      0.0.0.0:*    users:(("language_server",pid=600,fd=9))';
   assert(JSON.stringify(parseListeningPorts(ss).get(600)) === '[41234]', 'ss: loopback port per pid (Linux without lsof)');
 
+  console.log('\n[Suite 1c] agy servers (Antigravity builds from late Oct 2026), same parser on every OS');
+  // Shape seen on Windows 2026-10-28: one agy.exe per IDE window, token replaced
+  const winAgy = parseServerCommandLine('"C:\\Users\\me\\.gemini\\bin\\agy.exe" --hub --hub-port 53397 --app_data_dir antigravity --csrf_token abc-123 --add-dir "c:\\Users\\me\\Projects\\My App"');
+  assert(winAgy?.kind === 'agy' && winAgy.token === 'abc-123', 'Windows agy.exe: recognised, token read');
+  assert(winAgy?.workspaceId === null && JSON.stringify(winAgy.addDirs) === '["c:/users/me/projects/my app"]', 'agy: no workspace id; --add-dir with a space, normalized');
+  assert(winAgy?.appDataDir === 'antigravity', 'agy: --app_data_dir read');
+  assert(parseServerCommandLine('C:\\x\\agy.exe --csrf_token=t --add-dir=C:\\work\\proj')?.addDirs?.[0] === 'c:/work/proj', 'agy: --flag=value form');
+  const winLs = parseServerCommandLine('C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\resources\\bin\\language_server_windows_x64.exe --extension_server_csrf_token other --csrf_token real --workspace_id file_c_3A_proj');
+  assert(winLs?.kind === 'language_server' && winLs.token === 'real' && winLs.workspaceId === 'file_c_3A_proj', 'older Windows language_server: token not confused with --extension_server_csrf_token');
+  assert(parseServerCommandLine('C:\\x\\agy-helper.exe --csrf_token t') === null, 'a different program with a similar name is ignored');
+  assert(parseServerCommandLine('node agy.js --csrf_token t') === null, 'a script named agy is ignored');
+  assert(parseServerCommandLine('C:\\x\\agy.exe --hub --add-dir C:\\p') === null, 'a server without a token is ignored');
+  const macAgy = parsePsOutput(' 700   412 /Users/me/.gemini/bin/agy --hub --hub-port 51000 --app_data_dir antigravity --csrf_token mac-tok --add-dir /Users/me/proj');
+  assert(macAgy.length === 1 && macAgy[0].kind === 'agy' && macAgy[0].addDirs?.[0] === '/users/me/proj', 'macOS agy from ps output');
+  const twoWindows = [
+    { pid: 1, ppid: 9, attached: false, addDirs: ['c:/users/me/projects/a'] },
+    { pid: 2, ppid: 9, attached: false, addDirs: ['c:/users/me/projects/b'] }
+  ];
+  assert(rankLanguageServers(twoWindows, 'C:\\Users\\me\\Projects\\B\\')[0].pid === 2, "one agy per window: this window's server comes first");
+  assert(rankLanguageServers(twoWindows, 'C:\\Users\\me\\Projects\\A')[0].pid === 1, 'and the other window gets its own');
+  assert(rankLanguageServers(twoWindows)[0].pid === 1, 'no folder given: order kept');
+
   console.log('\n[Suite 2] Bridge against fake server');
   state.calls = [];
   const live = await bridge.findPending(CASCADE);
@@ -222,6 +246,18 @@ async function run() {
   assert(await lonely.findPending(CASCADE) === null, 'no workspace-less server -> no pending (fail closed)');
   await rejects(() => lonely.cancel(CASCADE), /not reachable/, 'actions fail loudly when the live server is missing');
 
+  // Two windows, one agy each (both answer on the fake port): each bridge must pick its own window's
+  const agyServers: LsServer[] = [
+    { pid: 41, workspaceId: null, token: TOKEN, ports: [port], kind: 'agy', addDirs: ['c:/users/me/projects/a'] },
+    { pid: 42, workspaceId: null, token: TOKEN, ports: [port], kind: 'agy', addDirs: ['c:/users/me/projects/b'] }
+  ];
+  const bridgeB = new LsBridge({ discover: async () => agyServers, discoveryCooldownMs: 0, workspace: 'C:\\Users\\me\\Projects\\B' });
+  await bridgeB.findPending(CASCADE);
+  assert(bridgeB.describeEndpoint()?.pid === 42, "window B's bridge talks to window B's agy");
+  const bridgeA = new LsBridge({ discover: async () => agyServers, discoveryCooldownMs: 0, workspace: 'C:\\Users\\me\\Projects\\A' });
+  await bridgeA.findPending(CASCADE);
+  assert(bridgeA.describeEndpoint()?.pid === 41 && bridgeA.describeEndpoint()?.kind === 'agy', "window A's bridge talks to window A's agy");
+
   console.log('\n[Suite 3] Adapter wired to the bridge');
   const brain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-brain-'));
   const logs = path.join(brain, CASCADE, '.system_generated', 'logs');
@@ -246,15 +282,37 @@ async function run() {
   assert(conv?.body.interaction.permission.scope === 2, 'adapter maps allow_conversation to scope 2');
   assert((await adapter.getSnapshot()).pendingApproval === null, 'approval clears after the IDE accepts');
 
+  // The agy agent (Oct 2026) accepts the images field without error but the agent never sees it
+  // (owner's live test, 0.2.3-B3). So images always go into the project as files the agent can open.
+  const uploadsDir = path.join(brain, '.ag-remote', 'uploads');
+  const savedPaths = (text: string) => [...text.matchAll(/(\S+[\\/]\.ag-remote[\\/]uploads[\\/][\w-]+\.png)/g)].map(m => m[1]);
+  state.calls = [];
+  await adapter.sendPrompt('what is wrong here?', [{ mimeType: 'image/png', data: Buffer.from('png-bytes').toString('base64') }]);
+  const accepted = state.calls.filter(c => c.method === 'SendUserCascadeMessage');
+  const acceptedText = accepted[0]?.body.items?.[0]?.text || '';
+  const acceptedPath = savedPaths(acceptedText)[0];
+  assert(accepted.length === 1 && acceptedText.startsWith('what is wrong here?'), 'image prompt sent once, keeping the user\'s text first');
+  assert(!!acceptedPath && path.isAbsolute(acceptedPath), 'prompt names the saved image by its full path');
+  assert(!!acceptedPath && fs.readFileSync(acceptedPath, 'utf8') === 'png-bytes', 'image saved into the project with its exact bytes');
+  assert(accepted[0]?.body.images?.length === 1, 'the images field is still sent, for builds that support it');
+  assert(fs.readFileSync(path.join(brain, '.ag-remote', '.gitignore'), 'utf8').trim() === '*', 'upload folder ignores itself in git');
+
   state.rejectImages = true;
   state.calls = [];
-  await adapter.sendPrompt('look', [{ mimeType: 'image/png', data: Buffer.from('png-bytes').toString('base64') }]);
-  const fallback = state.calls.filter(c => c.method === 'SendUserCascadeMessage').pop();
-  const saved = /\.ag-remote\/uploads\/[\w-]+\.png/.exec(fallback?.body.items?.[0]?.text || '')?.[0];
-  assert(saved && fallback?.body.images === undefined, 'refused images are resent as a text prompt naming the saved file');
-  assert(saved && fs.readFileSync(path.join(brain, saved), 'utf8') === 'png-bytes', 'image saved into the workspace with its exact bytes');
-  assert(fs.readFileSync(path.join(brain, '.ag-remote', '.gitignore'), 'utf8').trim() === '*', 'upload folder ignores itself in git');
+  await adapter.sendPrompt('', [{ mimeType: 'image/png', data: Buffer.from('second').toString('base64') }]);
+  const retried = state.calls.filter(c => c.method === 'SendUserCascadeMessage');
+  const retryText = retried.pop()?.body.items?.[0]?.text || '';
+  assert(savedPaths(retryText).length === 1 && retried.pop()?.body.images?.length === 1, 'refused images field: resent without it, still naming the file');
+  assert(fs.readdirSync(uploadsDir).filter(f => f.endsWith('.png')).length === 2, 'each image saved once, even when resent');
   state.rejectImages = false;
+
+  // Uploads older than a week are removed when new ones are saved
+  const stale = path.join(uploadsDir, '1000000000000-1.png');
+  fs.writeFileSync(stale, 'old');
+  const weekAgo = new Date(Date.now() - 8 * 24 * 3600 * 1000);
+  fs.utimesSync(stale, weekAgo, weekAgo);
+  await adapter.sendPrompt('again', [{ mimeType: 'image/png', data: Buffer.from('third').toString('base64') }]);
+  assert(!fs.existsSync(stale), 'uploads older than 7 days are cleaned up');
   await adapter.disconnect();
 
   const offline = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });
@@ -269,6 +327,83 @@ async function run() {
   assert(!report.includes('Conversation ') || !report.includes('hi'), 'report leaves out conversation titles');
   const none = await collectDiagnostics({ workspacePath: brain, discover: async () => [], brainDir: path.join(brain, 'nope') });
   assert(none.includes('Language servers found: 0') && none.includes('Connected to: none') && none.includes('(missing)'), 'report explains when nothing is found');
+  const agyReport = await collectDiagnostics({
+    workspacePath: brain, brainDir: brain,
+    discover: async () => [{ pid: 51, workspaceId: null, token: TOKEN, ports: [port], kind: 'agy', addDirs: [normalizeWorkspace(brain)], appDataDir: 'antigravity' }]
+  });
+  assert(agyReport.includes('agy') && agyReport.includes('data ~/.gemini/antigravity') && agyReport.includes('← this window'), "report names agy servers, their data folder and this window's server");
+  assert(agyReport.includes('Connected to: pid 51 (agy)') && !agyReport.includes(TOKEN), 'report shows the agy it connected to, no token');
+
+  console.log('\n[Suite 3c] Chat history in either folder');
+  // Antigravity moved history from ~/.gemini/antigravity-ide/brain to ~/.gemini/antigravity/brain (Oct 2026)
+  const oldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-old-brain-'));
+  const newDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-new-brain-'));
+  const putTranscript = (dir: string, id: string, text: string) => {
+    const d = path.join(dir, id, '.system_generated', 'logs');
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'transcript.jsonl'), JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: `<USER_REQUEST>${text}</USER_REQUEST>` }) + '\n');
+  };
+  putTranscript(oldDir, 'old-conv-0000-0000-000000000000', 'from before the update');
+  putTranscript(newDir, 'new-conv-0000-0000-000000000000', 'from after the update');
+  const { SessionWatcher: Watcher, } = await import('../src/adapter-antigravity/session-watcher.ts');
+  const { defaultConfig: defaults } = await import('../src/adapter-antigravity/config.ts');
+  const both = new Watcher(newDir, { ...defaults, brainDir: newDir, brainDirs: [newDir, oldDir] });
+  assert(await both.setActiveConversationId('new-conv-0000-0000-000000000000'), 'opens a conversation from the new folder');
+  assert(both.getSnapshot().messages.some(m => m.text === 'from after the update'), "reads the new folder's messages");
+  assert(await both.setActiveConversationId('old-conv-0000-0000-000000000000'), 'still opens one from the old folder');
+  assert(both.listAllSessions().length === 2, 'lists conversations from both folders');
+  both.stop();
+  const only = new AntigravityAdapter(oldDir, { brainDir: oldDir }, { lsBridge: null });
+  assert(((only as any).config.brainDirs || []).length === 1, 'an explicit single folder (tests) reads only that folder');
+  fs.rmSync(oldDir, { recursive: true, force: true });
+  fs.rmSync(newDir, { recursive: true, force: true });
+
+  console.log('\n[Suite 3d] "Working" comes from the agent, not a guess from the chat file');
+  // A chat whose last line is the user's message looks "still generating" to the file-based guess,
+  // e.g. after an error or a closed window. Seen 2026-10-28: an old chat showed "Working" + Stop for good.
+  const idleBrain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-idle-'));
+  const idleLogs = path.join(idleBrain, CASCADE, '.system_generated', 'logs');
+  fs.mkdirSync(idleLogs, { recursive: true });
+  const idleTranscript = path.join(idleLogs, 'transcript.jsonl');
+  fs.writeFileSync(idleTranscript, JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>left unanswered</USER_REQUEST>' }) + '\n');
+  state.steps = [{ type: 'CORTEX_STEP_TYPE_USER_INPUT', status: 'CORTEX_STEP_STATUS_DONE', userInput: { items: [{ text: 'left unanswered' }] } }];
+  state.workspace = idleBrain;
+
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === false, 'bridge: IDLE from the agent means not running');
+  state.runStatus = 'CASCADE_RUN_STATUS_BUSY';
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === true, 'bridge: BUSY means running');
+  state.runStatus = undefined;
+  await bridge.findPending(CASCADE);
+  assert(bridge.isRunning(CASCADE) === null, 'bridge: no status reported means unknown');
+
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  const idleAdapter = new AntigravityAdapter(idleBrain, { brainDir: idleBrain }, { lsBridge: bridge, livePollMs: 60000 });
+  await idleAdapter.connect();
+  assert((await idleAdapter.getSnapshot()).status === 'idle', 'agent says IDLE: the phone shows Ready, not Working, even though the file ends with a question');
+  state.runStatus = 'CASCADE_RUN_STATUS_RUNNING';
+  await (idleAdapter as any).pollLive();
+  assert((await idleAdapter.getSnapshot()).status === 'generating', 'agent says RUNNING: the phone shows Working');
+  state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
+  await (idleAdapter as any).pollLive();
+  assert((await idleAdapter.getSnapshot()).status === 'idle', 'back to IDLE: Working clears without any new message');
+  await idleAdapter.disconnect();
+
+  // Without a live status (no agent connection), the file guess still works, but not forever
+  const { SessionWatcher: GuessWatcher } = await import('../src/adapter-antigravity/session-watcher.ts');
+  const { defaultConfig: guessDefaults } = await import('../src/adapter-antigravity/config.ts');
+  const guess = new GuessWatcher(idleBrain, { ...guessDefaults, brainDir: idleBrain, brainDirs: [idleBrain] });
+  await guess.setActiveConversationId(CASCADE);
+  assert(guess.getSnapshot().status === 'generating', 'no live status, fresh unanswered message: guessed as working');
+  const longAgo = new Date(Date.now() - 20 * 60 * 1000);
+  fs.utimesSync(idleTranscript, longAgo, longAgo);
+  await guess.setActiveConversationId(CASCADE);
+  assert(guess.getSnapshot().status === 'idle', 'no live status, unanswered for 20 minutes: not shown as working');
+  guess.stop();
+  state.runStatus = undefined;
+  fs.rmSync(idleBrain, { recursive: true, force: true });
 
   const audit = fs.existsSync(auditLogger.getLogPath()) ? fs.readFileSync(auditLogger.getLogPath(), 'utf8') : '';
   assert(!audit.includes(TOKEN), 'csrf token never written to the audit log');
@@ -299,7 +434,7 @@ async function run() {
   writeTranscript(CASCADE, [userInput('hi')], past);
 
   const SessionWatcher = (await import('../src/adapter-antigravity/session-watcher.ts')).SessionWatcher;
-  const watcher = new SessionWatcher(brain, { ...(await import('../src/adapter-antigravity/config.ts')).defaultConfig, brainDir: brain });
+  const watcher = new SessionWatcher(brain, { ...(await import('../src/adapter-antigravity/config.ts')).defaultConfig, brainDir: brain, brainDirs: [brain] });
   const seen: any[] = [];
   watcher.on('event', e => seen.push(e));
   await watcher.start();

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3: Works with the new Antigravity agent (agy)
+
+Antigravity updates from late October 2026 replaced the agent's background program and moved where chats are saved, so the phone connected but showed no conversation. Both the old and the new setup now work, the same way on Windows, macOS and Linux.
+
+> **After installing this update, reload every open Antigravity window** (Ctrl+Shift+P, or Cmd+Shift+P on a Mac → **Developer: Reload Window**), or close and reopen Antigravity. Your phone talks to one window's copy of the extension; a window that isn't reloaded keeps running the old version, and the phone keeps showing no conversation. Your paired phones stay paired.
+
+- **Finds the new agent.** Recognises the new `agy` program as well as the older `language_server`.
+- **Each window talks to its own agent.** The new Antigravity runs one agent per window; approvals, prompts and stop now go to the right window's agent.
+- **Reads chats from the new and the old folder** (`~/.gemini/antigravity` and `~/.gemini/antigravity-ide`).
+- **Copy Diagnostics** shows which kind of agent was found, its project folder and its chat folder.
+- **Screenshots from the phone reach the agent.** The new Antigravity agent quietly ignored attached images. Each image is now saved in your project under `.ag-remote/uploads/` (ignored by git, removed after 7 days) and the message tells the agent where it is, so it opens and reads it.
+- **No more stuck "Working" and Stop button.** A conversation that ended without a reply (an error, a cancel, a closed window) could show as working forever on the phone. Working/Ready now comes from the agent itself, so it clears as soon as the agent is idle.
+- **Reminds you to reload.** After an update, the first window that starts the new version tells you to reload the others. The pairing panel now has a short "For best results" section with the same advice.
+
 ## 0.2.2: Macs with a leftover agent process
 
 - **Picks the right agent on a Mac.** Some Macs keep an old Antigravity background process running after an update or restart. The extension could connect to that one instead of the live one and show the wrong conversations. It now prefers the process that belongs to the running IDE.

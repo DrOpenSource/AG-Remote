@@ -9,9 +9,12 @@ import path from 'path';
 
 const IMAGE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 
+const UPLOAD_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
 /**
- * Fallback when the IDE refuses inline images: saves them to <workspace>/.ag-remote/uploads so the agent
- * can open them. The folder ignores itself in git. Returns workspace-relative paths.
+ * Saves phone images to <workspace>/.ag-remote/uploads so the agent can open them; the agy agent
+ * (Oct 2026) accepts inline images without error but never shows them to the model. The folder
+ * ignores itself in git, and uploads older than a week are removed. Returns absolute paths.
  */
 export function saveUploads(workspacePath: string, images: PromptImage[], now = Date.now()): string[] {
   const root = path.join(workspacePath, '.ag-remote');
@@ -19,10 +22,16 @@ export function saveUploads(workspacePath: string, images: PromptImage[], now = 
   fs.mkdirSync(dir, { recursive: true });
   const ignore = path.join(root, '.gitignore');
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  for (const old of fs.readdirSync(dir)) {
+    try {
+      const p = path.join(dir, old);
+      if (now - fs.statSync(p).mtimeMs > UPLOAD_MAX_AGE_MS) fs.rmSync(p);
+    } catch (_) {}
+  }
   return images.map((img, i) => {
-    const name = `${now}-${i + 1}.${IMAGE_EXT[img.mimeType] || 'img'}`;
-    fs.writeFileSync(path.join(dir, name), Buffer.from(img.data, 'base64'));
-    return `.ag-remote/uploads/${name}`;
+    const file = path.join(dir, `${now}-${i + 1}.${IMAGE_EXT[img.mimeType] || 'img'}`);
+    fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
+    return file;
   });
 }
 
@@ -94,6 +103,8 @@ export class AntigravityAdapter implements IdeAdapter {
 
   constructor(workspacePath: string = process.cwd(), customConfig: Partial<AdapterConfig> = {}, deps: AdapterDeps = {}) {
     this.config = { ...defaultConfig, ...customConfig };
+    // An explicit single folder (tests, custom setups) replaces the default list
+    if (customConfig.brainDir && !customConfig.brainDirs) this.config.brainDirs = [customConfig.brainDir];
     this.workspacePath = workspacePath;
     this.watcher = new SessionWatcher(workspacePath, this.config);
     this.ls = deps.lsBridge !== undefined
@@ -129,6 +140,12 @@ export class AntigravityAdapter implements IdeAdapter {
     const base = this.watcher.getSnapshot().status;
     if (!this.ls) return base;
     if (this.liveApproval) return 'awaiting_approval';
+    if (base === 'disconnected') return base;
+    // The agent's own run status beats the transcript guess, which stays "generating" for good
+    // when a chat ended on an unanswered message (error, cancel, window closed).
+    const cid = this.watcher.getActiveConversationId();
+    const running = cid ? this.ls.isRunning(cid) : null;
+    if (running !== null) return running ? 'generating' : 'idle';
     return base === 'awaiting_approval' ? 'generating' : base;
   }
 
@@ -229,14 +246,21 @@ export class AntigravityAdapter implements IdeAdapter {
     if (!this.ls) throw new Error(BRIDGE_UNAVAILABLE);
     if (!cid) throw new Error(NO_CONVERSATION);
     auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), images: images.length, cascadeId: cid });
+    let prompt = text.trim();
+    if (images.length) {
+      const paths = saveUploads(this.workspacePath, images);
+      auditLogger.log('PROMPT_IMAGES_SAVED', { paths });
+      const note = images.length === 1
+        ? `I attached an image from my phone. Open it to see it: ${paths[0]}`
+        : `I attached ${images.length} images from my phone. Open them to see them:\n${paths.map(p => `- ${p}`).join('\n')}`;
+      prompt = prompt ? `${prompt}\n\n${note}` : note;
+    }
     try {
-      await this.ls.sendPrompt(cid, text.trim(), images);
+      // Inline images too, for builds whose agent can see them
+      await this.ls.sendPrompt(cid, prompt, images);
     } catch (err) {
       if (!(err instanceof LsBridgeError && err.imagesRejected)) throw err;
-      const paths = saveUploads(this.workspacePath, images);
-      auditLogger.log('PROMPT_IMAGES_AS_FILES', { reason: err.message.slice(0, 200), paths });
-      const note = `Attached image${paths.length > 1 ? 's' : ''} from my phone (open to view): ${paths.join(', ')}`;
-      await this.ls.sendPrompt(cid, text.trim() ? `${text.trim()}\n\n${note}` : note);
+      await this.ls.sendPrompt(cid, prompt);
     }
   }
 

@@ -29,3 +29,4 @@ playwright.config.ts
 package-lock.json
 test-results/**
 playwright-report/**
+.ag-remote/**

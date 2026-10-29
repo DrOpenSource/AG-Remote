@@ -16,7 +16,7 @@ export interface DiagnosticsOptions {
 
 export async function collectDiagnostics(opts: DiagnosticsOptions): Promise<string> {
   const discover = opts.discover || discoverLanguageServers;
-  const brainDir = opts.brainDir || defaultConfig.brainDir;
+  const brainDirs = opts.brainDir ? [opts.brainDir] : (defaultConfig.brainDirs || [defaultConfig.brainDir]);
   const ws = normalizeWorkspace(opts.workspacePath);
   const lines: string[] = [
     '# Antigravity Remote diagnostics',
@@ -30,19 +30,21 @@ export async function collectDiagnostics(opts: DiagnosticsOptions): Promise<stri
   let servers: Awaited<ReturnType<Discover>> = [];
   try { servers = await discover(); } catch (err: any) { lines.push(`Discovery error: ${err?.message || err}`); }
   lines.push(`## Language servers found: ${servers.length}`);
-  for (const s of servers as any[]) {
-    const flags = [s.workspaceId ? `workspace ${s.workspaceId}` : 'no workspace (live candidate)'];
+  for (const s of servers) {
+    const flags = [s.kind || 'language_server', s.workspaceId ? `workspace ${s.workspaceId}` : 'no workspace (live candidate)'];
+    if (s.addDirs?.length) flags.push(`folder ${s.addDirs.map(d => `\`${d}\``).join(', ')}${s.addDirs.includes(ws) ? ' ← this window' : ''}`);
+    if (s.appDataDir) flags.push(`data ~/.gemini/${s.appDataDir}`);
     if (s.attached !== undefined) flags.push(s.attached ? 'attached to IDE' : 'not attached');
     if (s.ppid !== undefined) flags.push(`parent ${s.ppid}`);
     lines.push(`- pid ${s.pid}: ports ${s.ports.join(', ') || 'none'}; ${flags.join('; ')}`);
   }
   lines.push('');
 
-  // Same selection as the real bridge, fed the servers found above
-  const bridge = new LsBridge({ discover: async () => servers, discoveryCooldownMs: 0 });
+  // Same selection as the real bridge for this window, fed the servers found above
+  const bridge = new LsBridge({ discover: async () => servers, discoveryCooldownMs: 0, workspace: opts.workspacePath });
   const convs = await bridge.listConversations().catch(() => null);
   const ep = bridge.describeEndpoint();
-  lines.push(`## Connected to: ${ep ? `pid ${ep.pid}, port ${ep.port} (${ep.scheme})` : 'none (no workspace-less server answered)'}`);
+  lines.push(`## Connected to: ${ep ? `pid ${ep.pid} (${ep.kind || 'language_server'}), port ${ep.port} (${ep.scheme})` : 'none (no workspace-less server answered)'}`);
   if (convs) {
     const mine = convs.filter(c => c.workspaces.includes(ws));
     lines.push(`- Conversations the IDE lists: ${convs.length}`);
@@ -55,8 +57,11 @@ export async function collectDiagnostics(opts: DiagnosticsOptions): Promise<stri
   }
   lines.push('');
 
-  let brain = 'missing';
-  try { if (fs.existsSync(brainDir)) brain = `${fs.readdirSync(brainDir).length} entries`; } catch (_) { brain = 'unreadable'; }
-  lines.push(`## Chat history folder: \`${brainDir.replace(os.homedir(), '~')}\` (${brain})`);
+  lines.push('## Chat history folders');
+  for (const dir of brainDirs) {
+    let state = 'missing';
+    try { if (fs.existsSync(dir)) state = `${fs.readdirSync(dir).length} entries`; } catch (_) { state = 'unreadable'; }
+    lines.push(`- \`${dir.replace(os.homedir(), '~')}\` (${state})`);
+  }
   return lines.join('\n') + '\n';
 }

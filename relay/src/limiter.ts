@@ -5,9 +5,10 @@ import { DurableObject } from 'cloudflare:workers';
  * Fixed one-minute window, kept in memory: if the object is evicted the count starts over,
  * which only ever errs towards letting people in.
  *
- * The limit is deliberately generous. Mobile carriers put many phones behind one address
- * (carrier-grade NAT), and a normal phone or laptop reconnects only a few times a minute
- * even on a bad network. The point is to stop one address opening thousands of rooms.
+ * Limits are set in worker.ts. The connection limit is generous: mobile carriers put many
+ * phones behind one address (carrier-grade NAT), and a phone or laptop reconnects only a few
+ * times a minute even on a bad network; it only stops one address opening thousands of rooms.
+ * The pairing-code limit is strict, because every lookup is a guess at someone's live code.
  */
 export class ConnLimiter extends DurableObject {
   private windowStart = 0;

@@ -21,7 +21,7 @@ export interface RelayPhone {
 
 /** Pairing actions only the host window can perform. Relay ones are absent when the relay is off. */
 export interface HostControl {
-  relayPairUrl?: () => Promise<string | null>;
+  relayPairUrl?: () => Promise<{ url: string; code?: string } | string | null>;
   relayPhones?: () => RelayPhone[];
   unpairRelayPhone?: (pub: string) => Promise<void>;
   /** Unpairs every phone (Wi-Fi and relay); resolves true if relay phones were included. */
@@ -337,8 +337,9 @@ export class RemoteServer {
             return sendJson(404, { error: 'Relay is not enabled' });
           }
           if (url.pathname === '/api/hub/relay-pair') {
-            const pairingUrl = await control.relayPairUrl();
-            return pairingUrl ? sendJson(200, { url: pairingUrl }) : sendJson(404, { error: 'Relay is not enabled' });
+            const pairResult = await control.relayPairUrl();
+            if (!pairResult) return sendJson(404, { error: 'Relay is not enabled' });
+            return typeof pairResult === 'string' ? sendJson(200, { url: pairResult }) : sendJson(200, pairResult);
           }
           if (url.pathname === '/api/hub/relay-phones') return sendJson(200, { phones: control.relayPhones() });
           const body = await this.readJsonBody(req);

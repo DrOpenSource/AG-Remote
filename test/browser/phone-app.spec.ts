@@ -127,6 +127,59 @@ test('sends an image-only prompt, compressed to JPEG under 400 KB', async ({ pag
   expect(prompt.images[0].bytes).toBeLessThanOrEqual(400 * 1024);
 });
 
+test.describe('"Last active" line for a quiet conversation', () => {
+  const lastActive = (page: Page) => page.locator('#lastActive');
+
+  test('idle for 3 hours: shows "Last active 3 h ago"', async ({ page }) => {
+    await control('/last-active', { minutesAgo: 185 });
+    await openApp(page);
+    await expect(lastActive(page)).toBeVisible();
+    await expect(lastActive(page)).toHaveText('Last active 3 h ago');
+  });
+
+  test('minutes and days read naturally', async ({ page }) => {
+    await control('/last-active', { minutesAgo: 25 });
+    await openApp(page);
+    await expect(lastActive(page)).toHaveText('Last active 25 min ago');
+    await control('/last-active', { minutesAgo: 2 * 24 * 60 + 30 });
+    await page.reload();
+    await expect(lastActive(page)).toHaveText('Last active 2 days ago');
+    await control('/last-active', { minutesAgo: 26 * 60 });
+    await page.reload();
+    await expect(lastActive(page)).toHaveText('Last active 1 day ago');
+  });
+
+  test('recent activity: no line', async ({ page }) => {
+    await control('/last-active', { minutesAgo: 2 });
+    await openApp(page);
+    await expect(lastActive(page)).toBeHidden();
+  });
+
+  test('no activity time known: no line', async ({ page }) => {
+    await openApp(page);
+    await expect(lastActive(page)).toBeHidden();
+  });
+
+  test('hidden while the agent works or needs you, and after a new message', async ({ page }) => {
+    await control('/last-active', { minutesAgo: 185 });
+    await openApp(page);
+    await expect(lastActive(page)).toBeVisible();
+    await control('/approval', {});
+    await expect(lastActive(page)).toBeHidden(); // needs you
+    await page.locator('#btnApprove').click();
+    await expect(page.locator('#statusText')).toHaveText('Working');
+    await expect(lastActive(page)).toBeHidden(); // working
+    await page.locator('#btnStop').click();
+    await expect(page.locator('#statusText')).toHaveText('Ready');
+    await expect(lastActive(page)).toBeHidden(); // it was just active
+    await control('/last-active', { minutesAgo: 185 });
+    await page.reload();
+    await expect(lastActive(page)).toBeVisible();
+    await control('/message', { text: 'done' });
+    await expect(lastActive(page)).toBeHidden();
+  });
+});
+
 test('stop button appears while the agent works and stops it', async ({ page }) => {
   await openApp(page);
   await control('/approval', {});

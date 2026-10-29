@@ -17,7 +17,29 @@ run_worker_first = true
 name = "ROOM"
 class_name = "Room"
 
+[[durable_objects.bindings]]
+name = "CODES"
+class_name = "CodeStore"
+
+[[durable_objects.bindings]]
+name = "LIMITER"
+class_name = "ConnLimiter"
+
+[vars]
+# Per IP per minute. Raise WS_CONNECTS_PER_MINUTE if users behind one carrier IP hit 429s.
+WS_CONNECTS_PER_MINUTE = "60"
+# Pairing-code lookups/registrations: every lookup is a guess at someone's code, so keep this low.
+CODE_REQUESTS_PER_MINUTE = "10"
+
 # SQLite-backed class: required for Durable Objects on the free plan.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CodeStore"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ConnLimiter"]

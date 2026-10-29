@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased: Safer defaults and relay limits
+
+- **Relay-only by default.** New installs, and anyone who never changed `agRemote.transport`, now connect only through the end-to-end encrypted relay, and the extension's local server accepts this PC only. Before, it also opened a plain-HTTP server on port 49222 to everyone on the same Wi-Fi, which is risky on café or office networks. To keep pairing with the Wi-Fi PIN, set `agRemote.transport` to `"both"`. Phones paired through the relay are not affected.
+- **Pairing codes can't be guessed at speed.** The relay now allows 10 pairing-code lookups a minute per IP. The phone shows "Too many tries, wait a minute" if you hit it.
+- **One address can't flood the relay.** Each IP can open up to 60 relay connections a minute, far above what a phone or PC needs, even several behind one mobile-carrier address.
+- **Honest README.** The 6-character code stores the pairing secret on the relay for up to 5 minutes; the QR code keeps it on your devices.
+
+## 0.2.4: Unified pairing code and direct PWA launch
+
+- **Short pairing codes on any network.** A clean 6-character code (e.g. `K7A 9P2`) appears alongside the QR code. You can type it into your phone to pair over cellular data, remote Wi-Fi, or home Wi-Fi without scanning.
+- **QR code opens the installed PWA directly.** Scanning the pairing QR with your camera now opens directly in the installed Antigravity Remote PWA instead of a browser tab.
+- **PWA connect card improvements.** Fixed pairing input field filtering out non-digits when pasting links, and enabled seamless in-place pairing on the hosted relay.
+- **Visual branding & marketing kit.** Added hero banner and launch copy for the VS Code Marketplace and community announcements.
+
 ## 0.2.3: Works with the new Antigravity agent (agy)
 
 Antigravity updates from late October 2026 replaced the agent's background program and moved where chats are saved, so the phone connected but showed no conversation. Both the old and the new setup now work, the same way on Windows, macOS and Linux.

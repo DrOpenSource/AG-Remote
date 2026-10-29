@@ -8,7 +8,8 @@
  *            POST /reset           clear messages, approval and recorded calls
  *            POST /message {text}  agent message
  *            POST /approval {...}  agent asks for permission
- *            GET  /calls           what the phone did (prompts with image counts, approvals, stops)
+ *            POST /last-active {minutesAgo}  when the shown conversation last changed
+ *            GET  /calls          what the phone did (prompts with image counts, approvals, stops)
  */
 import http from 'http';
 import type { IdeAdapter, AdapterEvent, SessionSnapshot, Approval, ChatMessage, PromptImage, SessionStatus } from '../../src/core/types.ts';
@@ -25,13 +26,14 @@ class FakeAgent implements IdeAdapter {
   private messages: ChatMessage[] = [];
   private approval: Approval | null = null;
   private status: SessionStatus = 'idle';
+  private lastActivity: number | undefined;
   private cbs: Array<(e: AdapterEvent) => void> = [];
   private nextId = 1;
 
   async connect() {}
   async disconnect() {}
   async getSnapshot(): Promise<SessionSnapshot> {
-    return { status: this.status, messages: [...this.messages], pendingApproval: this.approval };
+    return { status: this.status, messages: [...this.messages], pendingApproval: this.approval, lastActivity: this.lastActivity };
   }
   async getPendingApproval() { return this.approval; }
   onEvent(cb: (e: AdapterEvent) => void) { this.cbs.push(cb); }
@@ -61,6 +63,7 @@ class FakeAgent implements IdeAdapter {
 
   agentSays(text: string) {
     const message: ChatMessage = { id: `m${this.nextId++}`, role: 'agent', text, ts: Date.now() };
+    this.lastActivity = message.ts;
     this.messages.push(message);
     this.fire({ type: 'message', message });
   }
@@ -81,6 +84,10 @@ class FakeAgent implements IdeAdapter {
     this.messages = [];
     this.approval = null;
     this.status = 'idle';
+    this.lastActivity = undefined;
+  }
+  setLastActivity(minutesAgo: number) {
+    this.lastActivity = Date.now() - minutesAgo * 60_000;
   }
 }
 
@@ -107,6 +114,7 @@ http.createServer(async (req, res) => {
     case 'POST /reset': agent.reset(); return reply({ ok: true });
     case 'POST /message': agent.agentSays(String(body.text || '')); return reply({ ok: true });
     case 'POST /approval': agent.asks(body); return reply({ ok: true });
+    case 'POST /last-active': agent.setLastActivity(Number(body.minutesAgo) || 0); return reply({ ok: true });
     case 'GET /calls': return reply(agent.calls);
     default: res.writeHead(404); res.end();
   }

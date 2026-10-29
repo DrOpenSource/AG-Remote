@@ -200,7 +200,8 @@ async function runTests() {
   assert(host.getStatus() === 'online', 'host connects to the relay');
   assert(net.urls[0] === `wss://relay.example/ws/${relayStore.room}?role=host`, 'dials wss://<relay>/ws/<room>?role=host');
 
-  const pairUrl = await host.createPairingUrl();
+  const pairRes = await host.createPairingUrl();
+  const pairUrl = typeof pairRes === 'string' ? pairRes : pairRes.url;
   const { origin, room, secret } = parsePairUrl(pairUrl);
   assert(origin === 'https://relay.example' && room === relayStore.room && secret.length === 43, 'pairing URL is https://<relay>/p/<room>#<secret>');
   const a = await makePhone(net, room);
@@ -311,7 +312,7 @@ async function runTests() {
 
   console.log('\n[5] Unpairing');
   const b = await makePhone(net, room);
-  await b.phone.pair(await host.createPairingUrl().then((u) => parsePairUrl(u).secret), 'Second phone');
+  await b.phone.pair(await host.createPairingUrl().then((u) => parsePairUrl(typeof u === 'string' ? u : u.url).secret), 'Second phone');
   await b.phone.connect();
   await until(() => host.connectedPhones() === 2);
   await host.revoke(b.phone.identity.pub);

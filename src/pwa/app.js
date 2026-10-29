@@ -24,6 +24,7 @@
   const promptForm = document.getElementById('promptForm');
   const promptInput = document.getElementById('promptInput');
   const btnSend = document.getElementById('btnSend');
+  const lastActiveLine = document.getElementById('lastActive');
   const btnAttach = document.getElementById('btnAttach');
   const attachInput = document.getElementById('attachInput');
   const attachTray = document.getElementById('attachTray');
@@ -44,13 +45,17 @@
   // Relay mode: opened from a relay QR (/p/<room>#<secret>), or a phone that paired that way before.
   // Everything else (local Wi-Fi, Tailscale) talks to the PC's own server with the session token.
   const RELAY_ROOM_KEY = 'ag_remote_relay_room';
-  const relayRoom = (() => {
+  let relayRoom = (() => {
     const m = window.location.pathname.match(/^\/p\/([A-Za-z0-9_-]{22})\/?$/);
     if (m) return m[1];
     if (window.location.protocol !== 'https:') return null;
     try { return localStorage.getItem(RELAY_ROOM_KEY); } catch (_) { return null; }
   })();
-  const relayMode = !!relayRoom;
+  let relayMode = !!relayRoom;
+  const isRelayHost = window.location.protocol === 'https:' &&
+    !window.location.hostname.endsWith('.ts.net') &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1';
   let relay = null; // RelayLink (relay-link.js) in relay mode
 
   /** Paired with a PC (it may still be unreachable right now). */
@@ -75,6 +80,10 @@
   async function initAuth() {
     if (relayMode) {
       startRelay();
+      return;
+    }
+    if (isRelayHost) {
+      showRelayPairing();
       return;
     }
     const params = new URLSearchParams(window.location.search);
@@ -172,19 +181,17 @@
   /** Relay pairing happens only by scanning a QR code, so the dialog explains that instead of asking for a PIN. */
   function showRelayPairing(error) {
     // A Home Screen app can't be opened by scanning (the camera opens the browser), and on iPhone it
-    // may not share the browser's storage. There, pasting the QR's link pairs instead.
+    // may not share the browser's storage. There, pasting the QR's link or typing the code pairs instead.
     const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
     pairHint.textContent = standalone
-      ? 'Point your camera at the QR code from AG-Remote on your PC, press and hold the link it shows, choose Copy Link, and paste it here.'
-      : 'Scan the QR code from AG-Remote on your PC (click AG-Remote in the IDE status bar). It works on any network.';
+      ? 'Enter the 6-character code from your PC, or paste the link from the QR code.'
+      : 'Scan the QR code from AG-Remote on your PC, or enter the 6-character pairing code.';
     pinLabel.classList.add('hidden');
-    tokenInput.classList.toggle('hidden', !standalone);
-    btnSaveToken.classList.toggle('hidden', !standalone);
-    if (standalone) {
-      tokenInput.removeAttribute('maxlength');
-      tokenInput.setAttribute('inputmode', 'url');
-      tokenInput.placeholder = 'Paste the pairing link';
-    }
+    tokenInput.classList.remove('hidden');
+    btnSaveToken.classList.remove('hidden');
+    tokenInput.removeAttribute('maxlength');
+    tokenInput.setAttribute('inputmode', 'text');
+    tokenInput.placeholder = 'Pairing code or link';
     btnCancelPair.classList.toggle('hidden', !(relay && relay.isReady()));
     if (error) showPairError(error);
     else pairError.classList.add('hidden');
@@ -324,7 +331,7 @@
 
   function tabFor(id) {
     const key = id || '';
-    if (!tabs.has(key)) tabs.set(key, { name: 'Antigravity', status: 'disconnected', messages: [], approval: null, title: '' });
+    if (!tabs.has(key)) tabs.set(key, { name: 'Antigravity', status: 'disconnected', messages: [], approval: null, title: '', lastActivity: 0 });
     return tabs.get(key);
   }
 
@@ -363,6 +370,7 @@
     t.status = snap.status;
     t.messages = Array.isArray(snap.messages) ? snap.messages : [];
     t.approval = snap.pendingApproval || null;
+    t.lastActivity = Number(snap.lastActivity) || 0;
   }
 
   async function resyncState() {
@@ -419,7 +427,7 @@
 
   function renderActiveTab() {
     const t = tabFor(activeTabId);
-    renderSnapshot({ status: t.status, messages: t.messages, pendingApproval: t.approval });
+    renderSnapshot({ status: t.status, messages: t.messages, pendingApproval: t.approval, lastActivity: t.lastActivity });
     renderTabBar();
     updateActiveSessionLabel();
   }
@@ -531,10 +539,12 @@
         }
       }
       t.messages.push(event.message);
+      t.lastActivity = Math.max(t.lastActivity || 0, Number(event.message.ts) || Date.now());
       if (visible) appendChatMessage(event.message);
     } else if (event.type === 'approval_requested') {
       t.approval = event.approval;
       t.status = 'awaiting_approval';
+      t.lastActivity = Date.now();
       if (visible) {
         showApproval(event.approval);
         updateStatus('awaiting_approval');
@@ -544,6 +554,7 @@
       }
     } else if (event.type === 'status_changed') {
       t.status = event.status;
+      if (event.status !== 'disconnected') t.lastActivity = Date.now();
       if (event.status !== 'awaiting_approval') t.approval = null;
       if (visible) {
         updateStatus(event.status);
@@ -554,6 +565,7 @@
       t.messages = [];
       t.approval = null;
       t.title = '';
+      t.lastActivity = 0; // the new conversation's messages bring their own times
       if (visible) {
         renderSnapshot({ status: t.status, messages: [], pendingApproval: null });
         updateActiveSessionLabel();
@@ -561,12 +573,40 @@
     } else if (event.type === 'adapter_error') {
       if (visible) showToast(event.error);
     }
+    if (visible) updateLastActive(t.status, t.lastActivity);
     renderTabBar();
   }
 
   // 4. UI Rendering Functions
+
+  // "Last active 3 h ago" when the shown conversation is idle and has been quiet this long
+  const QUIET_MS = 10 * 60 * 1000;
+
+  function formatAgo(ms) {
+    const minutes = Math.floor(ms / 60000);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
+  function updateLastActive(status, lastActivity) {
+    const quietFor = lastActivity ? Date.now() - lastActivity : 0;
+    const show = status === 'idle' && quietFor >= QUIET_MS;
+    lastActiveLine.classList.toggle('hidden', !show);
+    if (show) lastActiveLine.textContent = `Last active ${formatAgo(quietFor)}`;
+  }
+
+  // Keeps "… ago" current while the phone app is open
+  setInterval(() => {
+    const t = tabs.get(activeTabId || '');
+    if (t) updateLastActive(t.status, t.lastActivity);
+  }, 60000);
+
   function renderSnapshot(snapshot) {
     updateStatus(snapshot.status);
+    updateLastActive(snapshot.status, snapshot.lastActivity);
 
     // The empty state lives inside the feed, so keep it when clearing.
     chatFeed.replaceChildren(emptyState);
@@ -1129,9 +1169,14 @@
     }
   });
 
-  // Auto-format 6-digit PIN with space after 3 digits (e.g. 849 201)
+  // Auto-format 6-digit PIN or 6-char code with space after 3 chars (e.g. 849 201 or K7A 9P2)
   tokenInput.addEventListener('input', () => {
-    let clean = tokenInput.value.replace(/[^\d]/g, '');
+    const val = tokenInput.value;
+    // If input looks like a URL/link, don't format with spaces
+    if (tokenInput.getAttribute('inputmode') === 'url' || /[/:#.]/.test(val)) {
+      return;
+    }
+    let clean = val.replace(/[\s-]/g, '');
     if (clean.length > 6) clean = clean.slice(0, 6);
     if (clean.length > 3) {
       tokenInput.value = `${clean.slice(0, 3)} ${clean.slice(3)}`;
@@ -1140,21 +1185,122 @@
     }
   });
 
-  async function handleTokenConnect() {
-    if (relayMode) {
-      let link = null;
-      try { link = new URL(tokenInput.value.trim()); } catch (_) {}
-      if (!link || link.origin !== window.location.origin || !/^\/p\/[A-Za-z0-9_-]{22}\/?$/.test(link.pathname) || link.hash.length < 2) {
-        showPairError('That is not a pairing link. Copy the link from the QR code on your PC.');
-        return;
+  async function connectWithRelayRoomAndSecret(newRoom, newSecret) {
+    try {
+      localStorage.setItem(RELAY_ROOM_KEY, newRoom);
+    } catch (_) {}
+
+    relayRoom = newRoom;
+    relayMode = true;
+    window.history.replaceState(null, document.title, `/p/${newRoom}`);
+
+    btnSaveToken.disabled = true;
+    btnSaveToken.textContent = 'Connecting...';
+    pairError.classList.add('hidden');
+
+    if (relay) {
+      try { relay.stop(); } catch (_) {}
+      relay = null;
+    }
+
+    const { RelayLink } = await import('/relay-link.js');
+    relay = new RelayLink({
+      room: newRoom,
+      secret: newSecret,
+      onEvent: handleAdapterEvent,
+      onState: (state) => {
+        btnSaveToken.disabled = false;
+        btnSaveToken.textContent = 'Connect';
+        handleRelayState(state);
+      },
+      onPairError: (code) => {
+        btnSaveToken.disabled = false;
+        btnSaveToken.textContent = 'Connect';
+        showRelayPairing(RELAY_PAIR_ERRORS[code] || 'Pairing failed. Show a new QR code on your PC and scan it.');
       }
-      // Same room: only the #fragment changes, and the hashchange handler reloads with the new secret.
-      window.location.href = link.href;
+    });
+    relay.start();
+  }
+
+  async function handleTokenConnect() {
+    const rawVal = tokenInput.value.trim();
+    if (!rawVal) {
+      showPairError(isRelayHost
+        ? 'Enter the 6-character code or link from your PC.'
+        : 'Enter the 6-digit PIN or pairing code shown on your PC.');
+      tokenInput.focus();
       return;
     }
-    const cleanPin = tokenInput.value.replace(/[\s-]/g, '');
-    if (!/^\d{6}$/.test(cleanPin)) {
-      showPairError('Enter the 6-digit PIN shown on your PC.');
+
+    // 1. Check if input is a pairing link (e.g. https://remote.taqnik.in/p/<room>#<secret>, /p/<room>#<secret>, or remote.taqnik.in/p/...)
+    let linkUrl = rawVal;
+    if (!linkUrl.includes('://') && linkUrl.includes('/p/')) {
+      linkUrl = `${window.location.protocol}//${linkUrl}`;
+    }
+
+    let parsedLink = null;
+    try {
+      parsedLink = new URL(linkUrl, window.location.origin);
+    } catch (_) {}
+
+    const roomMatch = parsedLink ? parsedLink.pathname.match(/^\/p\/([A-Za-z0-9_-]{22})\/?$/) : null;
+    const hasSecret = parsedLink && parsedLink.hash && parsedLink.hash.length > 1;
+
+    if (roomMatch || (parsedLink && parsedLink.pathname.includes('/p/')) || (rawVal.includes('#') && rawVal.includes('/p/'))) {
+      if (!roomMatch || !hasSecret) {
+        showPairError('That is not a complete pairing link. Make sure to copy the full link including the # code from the QR.');
+        return;
+      }
+      await connectWithRelayRoomAndSecret(roomMatch[1], parsedLink.hash.slice(1));
+      return;
+    }
+
+    const cleanCode = rawVal.replace(/[\s-]/g, '');
+
+    // 2. Check 6-char alphanumeric short code (works across networks via relay)
+    if (/^[A-Za-z0-9]{6}$/.test(cleanCode)) {
+      // If code contains letters, OR we are running on the hosted relay, query relay /code/<CODE>
+      if (/[A-Za-z]/.test(cleanCode) || isRelayHost) {
+        btnSaveToken.disabled = true;
+        btnSaveToken.textContent = 'Connecting...';
+        pairError.classList.add('hidden');
+
+        const relayBase = isRelayHost ? window.location.origin : 'https://remote.taqnik.in';
+        try {
+          const res = await fetch(`${relayBase}/code/${encodeURIComponent(cleanCode.toUpperCase())}`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.room && data.fragment) {
+              await connectWithRelayRoomAndSecret(data.room, data.fragment);
+              return;
+            }
+          }
+          if (res.status === 429) {
+            btnSaveToken.disabled = false;
+            btnSaveToken.textContent = 'Connect';
+            showPairError('Too many tries. Wait a minute, then enter the code again or scan the QR code.');
+            return;
+          }
+        } catch (_) {}
+
+        btnSaveToken.disabled = false;
+        btnSaveToken.textContent = 'Connect';
+
+        if (isRelayHost && /^\d{6}$/.test(cleanCode)) {
+          showPairError('This looks like a local Wi-Fi PIN. If your phone is on cellular data, use the 6-character Pairing Code shown on your PC or scan the QR code.');
+          return;
+        }
+
+        showPairError('Pairing code expired or not found. Check the code or show a new QR code on your PC.');
+        return;
+      }
+    }
+
+    // 3. Wi-Fi 6-digit PIN flow (local LAN / Tailscale)
+    if (!/^\d{6}$/.test(cleanCode)) {
+      showPairError(isRelayHost ? 'Enter a 6-character pairing code or link.' : 'Enter the 6-digit PIN shown on your PC.');
       tokenInput.focus();
       return;
     }
@@ -1164,7 +1310,7 @@
     btnSaveToken.textContent = 'Connecting...';
 
     try {
-      const pairRes = await fetch(`/pair?t=${encodeURIComponent(cleanPin)}`, {
+      const pairRes = await fetch(`/pair?t=${encodeURIComponent(cleanCode)}`, {
         headers: { 'Accept': 'application/json' }
       });
       const data = await pairRes.json();
@@ -1179,7 +1325,6 @@
         }
         startApp();
       } else if (!data.error || data.error.startsWith('Invalid')) {
-        // Codes are single-use and the QR code carries the same code, so a scanned PIN is already spent.
         showPairError('That PIN is not valid. Each PIN works once, and scanning the QR code uses it. Click AG-Remote on your PC for a fresh PIN.');
       } else {
         showPairError(data.error);

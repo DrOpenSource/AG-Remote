@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="AG-Remote">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23284777'/><g fill='none' stroke='%23d6e3ff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' transform='translate(12 12.5) scale(.75) translate(-12 -11.5)'><path d='M6 19l6-10 6 10'/><path d='M9.5 6.5a3.5 3.5 0 0 1 5 0'/><path d='M7.05 4.05a7 7 0 0 1 9.9 0'/></g></svg>">
-  <link rel="stylesheet" href="/app.css?v=6">
+  <link rel="stylesheet" href="/app.css?v=7">
 </head>
 <body data-status="disconnected">
   <div class="app-container">
@@ -49,6 +49,9 @@
 
     <!-- One tab per open IDE window -->
     <nav class="tab-bar hidden" id="tabBar" role="tablist" aria-label="IDE windows"></nav>
+
+    <!-- When the shown conversation has been quiet for a while -->
+    <div class="last-active hidden" id="lastActive" role="status"></div>
 
     <!-- Approval / question card -->
     <section class="approval-card hidden" id="approvalCard" aria-live="assertive">
@@ -160,6 +163,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=7"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>

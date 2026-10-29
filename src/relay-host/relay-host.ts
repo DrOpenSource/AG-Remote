@@ -74,10 +74,25 @@ export class RelayHost {
     return this.status;
   }
 
-  /** Opens a 5-minute single-use pairing window. The QR encodes this URL. */
-  async createPairingUrl(): Promise<string> {
+  /** Opens a 5-minute single-use pairing window. Returns the QR URL and an optional short code. */
+  async createPairingUrl(): Promise<{ url: string; code?: string }> {
     const secret = await this.e2e.startPairing();
-    return `${this.opts.relayUrl}/p/${this.opts.store.room}#${secret}`;
+    const url = `${this.opts.relayUrl}/p/${this.opts.store.room}#${secret}`;
+    let code: string | undefined;
+    try {
+      const res = await fetch(`${this.opts.relayUrl}/code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: this.opts.store.room, fragment: secret }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { code: string };
+        code = data.code;
+      }
+    } catch {
+      // Short code is optional — the QR still works without it.
+    }
+    return { url, code };
   }
 
   pairedPhones(): PhoneRecord[] {

@@ -6,6 +6,7 @@ import { SessionManager } from '../core/session-manager.ts';
 import { WebSocketServer } from './websocket.ts';
 import { handlePhoneApi } from './api.ts';
 import type { AdapterEvent } from '../core/types.ts';
+import type { WaitingPhone } from '../relay-host/relay-host.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -23,6 +24,10 @@ export interface RelayPhone {
 export interface HostControl {
   relayPairUrl?: () => Promise<{ url: string; code?: string } | string | null>;
   relayPhones?: () => RelayPhone[];
+  /** Phones that used a valid code and wait for this PC to allow them. */
+  relayWaiting?: () => WaitingPhone[];
+  /** Allows or denies a waiting phone; false if it is no longer waiting. */
+  answerRelayPhone?: (id: string, allow: boolean) => boolean;
   unpairRelayPhone?: (pub: string) => Promise<void>;
   /** Unpairs every phone (Wi-Fi and relay); resolves true if relay phones were included. */
   unpairAll?: () => Promise<boolean>;
@@ -333,7 +338,7 @@ export class RemoteServer {
           if (!control.diagnostics) return sendJson(404, { error: 'Not available' });
           return sendJson(200, await control.diagnostics());
         }
-        const pairingPaths = ['/api/hub/relay-pair', '/api/hub/relay-phones', '/api/hub/relay-unpair', '/api/hub/unpair-all'];
+        const pairingPaths = ['/api/hub/relay-pair', '/api/hub/relay-phones', '/api/hub/relay-answer', '/api/hub/relay-unpair', '/api/hub/unpair-all'];
         if (req.method === 'POST' && pairingPaths.includes(url.pathname)) {
           if (!isLoopback) return sendJson(403, { error: 'Only IDE windows on this PC can manage pairing' });
           if (url.pathname === '/api/hub/unpair-all') {
@@ -348,8 +353,14 @@ export class RemoteServer {
             if (!pairResult) return sendJson(404, { error: 'Relay is not enabled' });
             return typeof pairResult === 'string' ? sendJson(200, { url: pairResult }) : sendJson(200, pairResult);
           }
-          if (url.pathname === '/api/hub/relay-phones') return sendJson(200, { phones: control.relayPhones() });
+          if (url.pathname === '/api/hub/relay-phones') {
+            return sendJson(200, { phones: control.relayPhones(), waiting: control.relayWaiting?.() || [] });
+          }
           const body = await this.readJsonBody(req);
+          if (url.pathname === '/api/hub/relay-answer') {
+            if (typeof body?.id !== 'string' || typeof body?.allow !== 'boolean') return sendJson(400, { error: 'Body must contain id and allow (true or false)' });
+            return sendJson(200, { ok: control.answerRelayPhone?.(body.id, body.allow) === true });
+          }
           if (typeof body?.pub !== 'string') return sendJson(400, { error: 'Body must contain pub' });
           await control.unpairRelayPhone(body.pub);
           return sendJson(200, { ok: true });

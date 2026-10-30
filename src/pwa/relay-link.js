@@ -1,10 +1,12 @@
 // Phone side of the hosted relay (remote.taqnik.in). Used by app.js when the page was opened from a
 // relay QR (/p/<room>#<secret>). Pairs once, keeps the phone's key in IndexedDB, and turns the app's
 // API calls into end-to-end encrypted requests to the laptop (see src/relay-host/relay-host.ts).
-import { PhoneE2E, generateIdentity } from './e2e.js';
+import { PhoneE2E, generateIdentity, checkCode, APPROVAL_TIMEOUT_MS } from './e2e.js';
 
 const REQUEST_TIMEOUT_MS = 20000;
 const PAIR_WAIT_MS = 20000;
+// Longer than the PC waits for its owner, so the PC's own "timed out" answer arrives first.
+const APPROVAL_WAIT_MS = APPROVAL_TIMEOUT_MS + 15000;
 const PING_MS = 25000;
 const CLOSE_ROOM_FULL = 4002;
 
@@ -60,6 +62,7 @@ export function parseRelayLocation(loc = window.location) {
  *   connecting   opening the relay socket
  *   waiting-host relay reached, the laptop (IDE) isn't connected to it
  *   pairing      using the QR secret
+ *   approving    the secret was right; waiting for the owner to click Allow on the PC (see checkCode)
  *   ready        encrypted session up; requests work
  *   unpaired     no pairing for this room (or the laptop revoked it): scan a new QR
  *   room-full    too many phones connected to this laptop
@@ -83,6 +86,8 @@ export class RelayLink {
     this.reconnectTimer = null;
     this.pingTimer = null;
     this.working = false; // pairing or handshaking right now
+    this.checkCode = ''; // shown on the phone and the PC while the PC decides
+    this.pairWait = null;
     this.lastActivity = Date.now();
   }
 
@@ -224,6 +229,7 @@ export class RelayLink {
       send: (text) => this.ws && this.ws.readyState === 1 && this.ws.send(text),
       onMessage: (msg) => this.handleMessage(msg),
       onReject: (reason) => this.handleReject(reason),
+      onPairWait: () => this.pairWait?.(),
       onHostLeft: () => {},
     });
   }
@@ -252,14 +258,29 @@ export class RelayLink {
         }
         this.setState('pairing');
         const identity = await generateIdentity();
+        this.checkCode = await checkCode(identity.pub);
         this.e2e = this.makeE2E(identity, null);
         const secret = this.secret;
         this.secret = null; // single use, whatever happens next
-        let timer;
+        let timer, fail;
+        const wait = (ms) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fail(Object.assign(new Error('timeout'), { code: 'timeout' })), ms);
+        };
+        this.pairWait = () => {
+          wait(APPROVAL_WAIT_MS);
+          this.setState('approving');
+        };
         const hostPub = await Promise.race([
           this.e2e.pair(secret, deviceName()),
-          new Promise((_, reject) => (timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'timeout' })), PAIR_WAIT_MS))),
-        ]).finally(() => clearTimeout(timer));
+          new Promise((_, reject) => {
+            fail = reject;
+            wait(PAIR_WAIT_MS);
+          }),
+        ]).finally(() => {
+          clearTimeout(timer);
+          this.pairWait = null;
+        });
         this.pairing = { identity, hostPub };
         await savePairing(this.room, this.pairing);
       }
@@ -267,7 +288,7 @@ export class RelayLink {
       this.setState('ready');
     } catch (err) {
       const code = (err && err.code) || 'error';
-      if (this.state === 'pairing') {
+      if (this.state === 'pairing' || this.state === 'approving') {
         this.e2e = null;
         this.setState('unpaired');
         this.onPairError(code);

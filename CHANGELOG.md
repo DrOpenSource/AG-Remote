@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.2.5: Every window shows its own chat, safer defaults
+## 0.2.5: Your PC decides which phones can pair, and every window shows its own chat
 
 > **After installing this update, quit Antigravity completely** (File → Exit) and open it again, so every window runs the new version.
 
+> If a phone gives up on pairing after about 20 seconds while your PC is still asking, it has the old app open. Close the app on the phone, open it again, and pair once more.
+
+- **Allow this phone?** A phone that scans the QR code or types the pairing code is no longer paired straight away. Your PC asks first: in the pairing panel (in any Antigravity window), or as a notification. Both screens show the same 4-digit code, so you can tell your phone from someone else's. If nobody answers within 2 minutes, the phone is refused. Someone who saw or guessed your code still can't pair without your click.
 - **Every window shows its own conversation.** With two or more Antigravity windows open, the phone could stay connected but empty, for one window or for all of them. Recent Antigravity builds start each window's agent without saying which folder it belongs to, so every window connected to whichever agent was found first, and that agent only knows its own window's chats. Each window now finds the agent its own window started; failing that, the one holding its conversations. A window whose agent is still starting, or that has no chat yet, keeps checking and switches within about a minute.
 - **Copy Diagnostics shows what the phone sees.** The report now also asks every agent for its chats, checks that the shown chat's history is on disk, and shows the view of the window serving the phone: its version (with a warning if it differs from this window's), the relay status, and for each window which agent it uses, which conversation it shows and how many messages. Still no tokens, chat titles or message text.
 - **Relay-only by default.** New installs, and anyone who never changed `agRemote.transport`, now connect only through the end-to-end encrypted relay, and the extension's local server accepts this PC only. Before, it also opened a plain-HTTP server on port 49222 to everyone on the same Wi-Fi, which is risky on café or office networks. To keep pairing with the Wi-Fi PIN, set `agRemote.transport` to `"both"`. Phones paired through the relay are not affected.

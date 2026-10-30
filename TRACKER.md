@@ -23,7 +23,7 @@
 | **v0.2.0–0.2.2** | **Public release** | Attachments, Mac/Linux, diagnostics, live pairing panel, 221 KB VSIX; Open VSX + VS Code Marketplace; repo public | 72 / 72 (bridge) | 🟢 **Released** |
 | **v0.2.3** | **New Agent (agy) Support** | Per-window agy support, moved chat folders, status detection fix | Verified | 🟢 **Released** |
 | **v0.2.4** | **Unified Pairing & PWA Launch** | 6-char short codes via DO CodeStore, PWA deep linking, input fixes, hero banner | 56 / 56 (relay) | 🟢 **Released** |
-| **v0.2.5** | **Every Window, Its Own Chat** | Window finds its own agy (parent = extension host) when agy has no `--add-dir`; diagnostics show the serving window's view; relay-only default, relay rate limits | 127 / 127 (bridge), verified by a tester | 🟡 **PR #25** |
+| **v0.2.5** | **Safer Pairing, Every Window Its Own Chat** | "Allow this phone?" on the PC with a matching check code, relay-only by default, per-IP relay limits; each window finds its own agy (parent = extension host) when agy has no `--add-dir`; diagnostics show the serving window's view | 68 / 68 (e2e), 49 / 49 (relay host), 58 / 58 (relay), 127 / 127 (bridge); empty-chat fix verified by a tester | 🟡 **Ready for testing** |
 | **v0.3.0 – v0.6.0** | **Roadmap** | Voice, files, replies, diffs, safe auto-approve, history, Git, languages, own relay, Windsurf | – | ⬜ Planned, see [RELEASE_PLAN](docs/RELEASE_PLAN.md) |
 
 **Current Test Metric:** All 11 root test suites passing (230+ assertions), relay suite 56/56 passing. 100% green across all environments.

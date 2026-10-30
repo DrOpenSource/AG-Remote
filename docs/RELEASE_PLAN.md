@@ -107,41 +107,95 @@ A version may not be released until every box here is ticked for it. Copy this l
 - [x] `0.2.5-B3` Phone shows "On your PC, click Allow" with its check code and waits up to 2 min 15 s; clear messages for denied and timed out. Cache version bumped (app.js v10, shell v14).
 
 **Manual checks for this version**
-- [ ] `0.2.5-V1` Pair by QR: phone shows the code, PC shows the same code, Allow pairs it.
-- [ ] `0.2.5-V2` Pair by the 6-character code, from the panel in a second window (not the hosting one).
-- [ ] `0.2.5-V3` Deny: the phone says it was not allowed and the panel shows a new QR code.
-- [ ] `0.2.5-V4` Wait 2 minutes without answering: the phone says nobody answered; nothing is added to the paired list.
-- [ ] `0.2.5-V5` A phone that was already paired reconnects without being asked.
-- [ ] `0.2.5-V6` Wi-Fi rows of the core checklist with `agRemote.transport` set to `"both"`.
+- [x] `0.2.5-V1` Pair by QR: phone shows the code, PC shows the same code, Allow pairs it.
+- [x] `0.2.5-V2` Pair by the 6-character code, from the panel in a second window (not the hosting one).
+- [x] `0.2.5-V3` Deny: the phone says it was not allowed and the panel shows a new QR code.
+- [x] `0.2.5-V4` Wait 2 minutes without answering: the phone says nobody answered; nothing is added to the paired list.
+- [x] `0.2.5-V5` A phone that was already paired reconnects without being asked.
+- [x] `0.2.5-V6` Wi-Fi rows of the core checklist with `agRemote.transport` set to `"both"`.
 
 **Release gate**
 
 Before building the VSIX
-- [ ] All new tests were committed before (or with) the code they test, and failed without it.
-- [ ] `npm test` passes locally.
-- [ ] CI passes on Windows, macOS and Linux.
-- [ ] `relay` tests pass (`src/pwa/` changed).
-- [ ] No new runtime dependency; any new dev dependency was approved.
+- [x] All new tests were committed before (or with) the code they test, and failed without it.
+- [x] `npm test` passes locally.
+- [x] CI passes on Windows, macOS and Linux.
+- [x] `relay` tests pass (`src/pwa/` changed).
+- [x] No new runtime dependency; any new dev dependency was approved.
 
 Build
-- [ ] Version bumped in `package.json`; `CHANGELOG.md` entry written for users.
-- [ ] `npm run package` builds the VSIX with no warnings; size noted (budget 150 KB).
-- [ ] VSIX contents checked: icon, `dist/extension.cjs`, `dist/pwa/*`, no source maps, notes or tests.
+- [x] Version bumped in `package.json`; `CHANGELOG.md` entry written for users.
+- [x] `npm run package` builds the VSIX with no warnings; size noted (budget 150 KB).
+- [x] VSIX contents checked: icon, `dist/extension.cjs`, `dist/pwa/*`, no source maps, notes or tests.
 
 Verify the built VSIX (manual, real devices)
-- [ ] 👤 Install the VSIX in Antigravity, reload every window.
-- [ ] 👤 `cd relay && npx wrangler deploy` first (the phone app changed), and confirm the live site serves app.js v10.
+- [x] 👤 Install the VSIX in Antigravity, reload every window.
+- [x] 👤 `cd relay && npx wrangler deploy` first (the phone app changed), and confirm the live site serves app.js v10.
+- [x] 👤 Core regression checklist on Android (and iPhone if available), relay and Wi-Fi.
+- [x] 👤 The manual checks above pass.
+
+Release
+- [x] Pull request with CI green; 👤 owner merges.
+- [x] Tag `v0.2.5` on the merge commit; GitHub release with the tested VSIX attached.
+- [x] 👤 Publish the same VSIX to Open VSX and the VS Code Marketplace.
+- [x] Both listings show 0.2.5 and the GitHub asset matches the published file (SHA-256).
+- [x] Update `TRACKER.md` and this plan.
+
+**Release** - [x] `0.2.5-R1` Release gate complete. Released 2026-10-30 (Open VSX, Marketplace, GitHub release v0.2.5 on 76ef060; all three files identical).
+
+---
+
+## 0.2.6: Notifications you can tell apart, and an instant wake-up (patch)
+
+**Goal:** every notification says which project it is about and what kind of request it is, without showing the command; and turning the phone screen back on shows the live session at once instead of reconnecting from scratch.
+
+**Tests first**
+- [x] `0.2.6-T1` Push content (`test/test-relay-host.ts` [4b]): the push names the kind of request (command, new file, file edit, question) but carries no command, description, folder, question text or approval id; it has the project name, a short per-window key and the time; each window gets its own key; "finished" waits until the agent stays idle, is sent once, and a question right after a run cancels it; the push topic is per project, and payloads from older PCs keep the old topic.
+- [x] `0.2.6-T2` What the phone shows (`test/test-pwa.ts`, sw.js push handler in a sandbox): title is the project, body says what the agent wants; one notification per project; "finished" replaces that project's approval; app icon and badge; payloads from a PC before 0.2.6 and unknown kinds still read clearly; every pre-cached file is served; PNG icons in the manifest.
+- [x] `0.2.6-T3` Wake-up (`test/test-relay-link.ts`, new): several wake events while connecting keep the one socket; an open socket is checked with one ping and kept if the relay answers; no answer in 2 s replaces it once; a closed socket is replaced at once; a socket stuck opening for 8 s is restarted; an unpaired phone stays put.
+
+**Build**
+- [x] `0.2.6-B1` PC: `requestCategory()` (kind of request only), project name from the event's window (or the only window), per-window key and time in the encrypted payload, "finished" after 3 s of idle, push `Topic` per project.
+- [x] `0.2.6-B2` Phone service worker: "<project>" / "The agent wants to run a command" (create a file, edit a file, has a question, use the browser, open a web page, use a tool, needs your permission; finished its task), one tag per project, timestamp, PNG icon and badge (`src/pwa/icons/`, 16 KB, copied by `build:pwa`). Tapping a notification shows what it said while the app reconnects. Opening the app clears its notifications.
+- [x] `0.2.6-B3` Phone wake-up: `RelayLink.wake()` keeps a socket that is still opening, pings an open one and keeps it if it answers, and replaces only a dead one (`restart()`). Wi-Fi mode no longer restarts a socket that is still opening. One resync at a time; the shown window's chat is asked for together with the window list and drawn first. "Reconnecting..." instead of "Connecting..." after the first connection. Cache version bumped (app.js v11, shell v15).
+
+**Manual checks for this version**
+- [ ] `0.2.6-V1` Lock the phone, start a run in project A that needs a command approval: the notification is titled with A's name and says "The agent wants to run a command", with no command text on the lock screen.
+- [ ] `0.2.6-V2` Two windows (A and B) both ask while the phone is locked: two separate notifications, one per project.
+- [ ] `0.2.6-V3` A run in A finishes: one "finished its task" notification that replaces A's approval notification; no extra "finished" while the agent is still working between steps.
+- [ ] `0.2.6-V4` Screen off for about 30 seconds, then on: the app shows "Ready"/"Working" straight away with no "Reconnecting..." (socket kept).
+- [ ] `0.2.6-V5` Screen off for 10 minutes or more, then on: the last screen stays visible, "Reconnecting..." shows briefly, and the live session is back within about 2 seconds.
+- [ ] `0.2.6-V6` Tap a notification: the app opens, shows what the notification said, and clears the other notifications.
+- [ ] `0.2.6-V7` The installed app (Android) shows the new icon on the Home Screen and in notifications.
+
+**Release gate**
+
+Before building the VSIX
+- [x] All new tests were committed before (or with) the code they test, and failed without it.
+- [x] `npm test` passes locally (all 12 suites), and `npm run test:browser` 15 / 15.
+- [ ] CI passes on Windows, macOS and Linux.
+- [x] `relay` tests pass (`src/pwa/` changed): 58 / 58.
+- [x] No new runtime dependency; any new dev dependency was approved.
+
+Build
+- [x] Version bumped in `package.json`; `CHANGELOG.md` entry written for users.
+- [x] `npm run package` builds the VSIX with no warnings; size noted (budget 150 KB): 120 KB (was 103 KB; icons 16 KB).
+- [x] VSIX contents checked: icon, `dist/extension.cjs`, `dist/pwa/*` including `dist/pwa/icons/*`, no source maps, notes or tests (18 files).
+
+Verify the built VSIX (manual, real devices)
+- [ ] 👤 Install the VSIX in Antigravity, quit Antigravity completely and open it again.
+- [ ] 👤 `cd relay && npx wrangler deploy` first (the phone app changed), and confirm the live site serves app.js v11 and shell v15.
 - [ ] 👤 Core regression checklist on Android (and iPhone if available), relay and Wi-Fi.
 - [ ] 👤 The manual checks above pass.
 
 Release
 - [ ] Pull request with CI green; 👤 owner merges.
-- [ ] Tag `v0.2.5` on the merge commit; GitHub release with the tested VSIX attached.
+- [ ] Tag `v0.2.6` on the merge commit; GitHub release with the tested VSIX attached.
 - [ ] 👤 Publish the same VSIX to Open VSX and the VS Code Marketplace.
-- [ ] Both listings show 0.2.5 and the GitHub asset matches the published file (SHA-256).
+- [ ] Both listings show 0.2.6 and the GitHub asset matches the published file (SHA-256).
 - [ ] Update `TRACKER.md` and this plan.
 
-**Release** - [ ] `0.2.5-R1` Release gate complete.
+**Release** - [ ] `0.2.6-R1` Release gate complete.
 
 ---
 
@@ -297,7 +351,8 @@ Release
 | 0.2.2 | Mac fix, diagnostics, live pairing panel, smaller VSIX | ✅ Released 2026-10-28 |
 | 0.2.3 | CI on 3 OSes, browser tests, attachments confirmed | ✅ Released 2026-10-29 |
 | 0.2.4 | Short pairing codes, QR opens the installed app | ✅ Released 2026-10-29 |
-| 0.2.5 | Safer pairing: "Allow this phone?", relay-only default, relay limits | 🟡 Ready for testing |
+| 0.2.5 | Safer pairing: "Allow this phone?", relay-only default, relay limits; every window its own chat | ✅ Released 2026-10-30 |
+| 0.2.6 | Notifications that say which project and what it wants; instant wake-up | 🟡 Ready for testing |
 | 0.3.0 | Voice input, any file | ⬜ Next |
 | 0.3.1 | Readable replies, listing polish | ⬜ |
 | 0.4.0 | Diffs, safe auto-approve | ⬜ |

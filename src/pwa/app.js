@@ -155,8 +155,12 @@
     relay.start();
   }
 
+  // After the first connection, a drop keeps the last screen and says "Reconnecting".
+  let relayWasReady = false;
+
   function handleRelayState(state) {
     if (state === 'ready') {
+      relayWasReady = true;
       pairingModal.classList.add('hidden');
       resyncState();
       pushOnReady();
@@ -170,7 +174,7 @@
     }
     if (state === 'approving') showApprovalWait(relay ? relay.checkCode : '');
     const labels = {
-      'connecting': 'Connecting...',
+      'connecting': relayWasReady ? 'Reconnecting...' : 'Connecting...',
       'pairing': 'Pairing...',
       'approving': 'Allow on your PC',
       'waiting-host': 'PC offline',
@@ -383,6 +387,7 @@
     if (res.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true });
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const snap = res.data;
+    if (!tabs.has(id || '')) return; // the window closed while we asked
     const t = tabFor(id);
     t.status = snap.status;
     t.messages = Array.isArray(snap.messages) ? snap.messages : [];
@@ -390,9 +395,37 @@
     t.lastActivity = Number(snap.lastActivity) || 0;
   }
 
-  async function resyncState() {
+  // One resync at a time. Waking fires several events and the relay coming back adds another;
+  // a request made meanwhile runs once more after the current one instead of in parallel.
+  let resyncRunning = null;
+  let resyncAgain = false;
+
+  function resyncState() {
+    if (resyncRunning) {
+      resyncAgain = true;
+      return resyncRunning;
+    }
+    resyncRunning = (async () => {
+      try {
+        do {
+          resyncAgain = false;
+          await resyncOnce();
+        } while (resyncAgain);
+      } finally {
+        resyncRunning = null;
+      }
+    })();
+    return resyncRunning;
+  }
+
+  /** The shown window's chat is asked for together with the window list and drawn first; other tabs follow. */
+  async function resyncOnce() {
     if (!linked() || (relayMode && !relay.isReady())) return;
     try {
+      const shownId = activeTabId;
+      const shown = tabs.has(shownId)
+        ? fetchTabState(shownId).then(() => null, (err) => err)
+        : null;
       let windows = [];
       let selectedId = null;
       const winRes = await api('GET', '/api/windows');
@@ -404,8 +437,17 @@
       }
       syncTabs(windows, selectedId);
       if (tabs.size === 0) tabFor('');
-      await Promise.all([...tabs.keys()].map(id => fetchTabState(id)));
+      const shownErr = shown ? await shown : null;
+      if (shownErr?.unauthorized) throw shownErr;
+      const early = shown && !shownErr && activeTabId === shownId;
+      if (!early) await fetchTabState(activeTabId);
       renderActiveTab();
+      // A tab whose refresh fails keeps what it had; only a revoked phone stops here.
+      const rest = [...tabs.keys()].filter(id => id !== activeTabId);
+      const errs = await Promise.all(rest.map(id => fetchTabState(id).then(() => null, (err) => err)));
+      const unauthorized = errs.find(e => e?.unauthorized);
+      if (unauthorized) throw unauthorized;
+      if (rest.length) renderTabBar();
     } catch (err) {
       if (err && err.unauthorized) {
         showToast('Session token invalid or expired. Please re-pair.');
@@ -1497,12 +1539,51 @@
   function handleAppWake() {
     if (relayMode && relay) {
       relay.wake();
-    } else if (!ws || ws.readyState !== WebSocket.OPEN) {
+    } else if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+      // A socket still opening is left to finish: waking fires several events at once.
       connectWebSocket();
     }
     resyncState();
     startVisibilityHeartbeat();
+    if (document.visibilityState === 'visible') clearNotifications();
   }
+
+  // Notifications: the app on screen shows everything they said, so it clears them; a tapped one
+  // says what it was about while the app reconnects (sw.js posts it, or caches it for a fresh window).
+  function clearNotifications() {
+    if (!pushSupported) return;
+    navigator.serviceWorker.ready
+      .then((reg) => reg.getNotifications())
+      .then((list) => list.forEach((n) => n.close()))
+      .catch(() => {});
+  }
+
+  const NOTICE_MAX_AGE_MS = 2 * 60 * 1000;
+
+  function showNotice(notice) {
+    if (!notice || notice.type !== 'ag-notice' || typeof notice.text !== 'string' || !notice.text) return;
+    if (!(Date.now() - Number(notice.at) < NOTICE_MAX_AGE_MS)) return;
+    showToast(notice.text);
+  }
+
+  async function takeCachedNotice() {
+    try {
+      const cache = await caches.open('ag-remote-notice');
+      const res = await cache.match('/__notice');
+      if (!res) return;
+      await cache.delete('/__notice');
+      showNotice(await res.json());
+    } catch (_) {}
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type !== 'ag-notice') return;
+      showNotice(e.data);
+      caches.open('ag-remote-notice').then((c) => c.delete('/__notice')).catch(() => {});
+    });
+  }
+  if ('caches' in window) takeCachedNotice();
 
   function handleAppSleep() {
     stopVisibilityHeartbeat();

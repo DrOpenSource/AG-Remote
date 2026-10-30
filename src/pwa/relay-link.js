@@ -8,6 +8,11 @@ const PAIR_WAIT_MS = 20000;
 // Longer than the PC waits for its owner, so the PC's own "timed out" answer arrives first.
 const APPROVAL_WAIT_MS = APPROVAL_TIMEOUT_MS + 15000;
 const PING_MS = 25000;
+// Waking up: how long a ping to an open socket may take before the socket counts as dead, how
+// recently the relay must have sent something to skip the ping, and how long opening may take.
+const PROBE_MS = 2000;
+const FRESH_MS = 3000;
+const CONNECT_STUCK_MS = 8000;
 const CLOSE_ROOM_FULL = 4002;
 
 // ---------- storage: one pairing per room, CryptoKeys stored as-is (the private key can't be read out) ----------
@@ -89,6 +94,8 @@ export class RelayLink {
     this.checkCode = ''; // shown on the phone and the PC while the PC decides
     this.pairWait = null;
     this.lastActivity = Date.now();
+    this.connectStartedAt = 0;
+    this.probeTimer = null;
   }
 
   async start() {
@@ -114,28 +121,53 @@ export class RelayLink {
   }
 
   /**
-   * Reconnects immediately if the socket dropped, was suspended by OS sleep, or has gone stale.
-   * Eliminates the multi-second delay when returning to the PWA.
+   * Called when the app comes back on screen. A socket the phone kept open is checked with one ping
+   * (the relay answers it without waking anything) and kept if it answers, so the session goes on
+   * with no new handshake. Only a dead or missing socket is replaced. Several wake events arrive at
+   * once (visible, focus, online): a connect or check already under way is left to finish.
    */
   wake() {
     if (this.state === 'unpaired' || this.state === 'room-full') return;
-    const now = Date.now();
-    const isStale = !this.ws || this.ws.readyState !== 1 || (now - this.lastActivity > 10000);
-    if (isStale) {
-      if (this.ws) {
-        this.ws.onclose = null;
-        this.ws.onerror = null;
-        this.ws.onmessage = null;
-        try { this.ws.close(); } catch (_) {}
-        this.ws = null;
-      }
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-      this.backoff = 1000;
-      this.connect();
-    } else {
-      try { this.ws.send('ping'); } catch (_) {}
+    const ws = this.ws;
+    if (ws && ws.readyState === 0) {
+      // Still opening. Leave it, unless the phone slept in the middle and it never finished.
+      if (Date.now() - this.connectStartedAt > CONNECT_STUCK_MS) this.restart();
+      return;
     }
+    if (ws && ws.readyState === 1) {
+      if (this.probeTimer || Date.now() - this.lastActivity < FRESH_MS) return;
+      const sentAt = Date.now();
+      try {
+        ws.send('ping');
+      } catch (_) {
+        this.restart();
+        return;
+      }
+      this.probeTimer = setTimeout(() => {
+        this.probeTimer = null;
+        if (this.ws === ws && this.lastActivity < sentAt) this.restart();
+      }, PROBE_MS);
+      return;
+    }
+    this.restart();
+  }
+
+  /** Drops the current socket, if any, and connects again now. */
+  restart() {
+    clearTimeout(this.probeTimer);
+    this.probeTimer = null;
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      try { this.ws.close(); } catch (_) {}
+      this.ws = null;
+    }
+    clearInterval(this.pingTimer);
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.backoff = 1000;
+    this.connect();
   }
 
   /** Reconnects now if the socket dropped (e.g. the phone slept). */
@@ -181,6 +213,7 @@ export class RelayLink {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/${this.room}?role=phone`);
     this.ws = ws;
+    this.connectStartedAt = Date.now();
     this.hostPresent = false;
     this.setState('connecting');
     this.e2e = this.pairing

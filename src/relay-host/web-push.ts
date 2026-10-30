@@ -80,7 +80,12 @@ export type PushResult = 'sent' | 'gone' | 'failed';
 /** Sends one notification. 'gone' means the phone dropped the subscription and it should be forgotten. */
 export async function sendPush(sub: PushSub, payload: object, vapid: VapidKeys, subject: string, ttlSeconds = 3600): Promise<PushResult> {
   try {
-    const topic = (payload as any)?.kind === 'done' ? 'ag-done' : 'ag-approval';
+    // A push still waiting for a sleeping phone is replaced by a newer one with the same topic:
+    // one per project, so two projects don't overwrite each other. Topic: up to 32 base64url chars.
+    const win = (payload as any)?.win;
+    const topic = typeof win === 'string' && /^[\w-]{1,28}$/.test(win)
+      ? `ag-${win}`
+      : (payload as any)?.kind === 'done' ? 'ag-done' : 'ag-approval';
     const res = await fetch(sub.endpoint, {
       method: 'POST',
       headers: {

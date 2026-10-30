@@ -1,7 +1,8 @@
 import { HostE2E } from '../pwa/e2e.js';
 import { SessionManager } from '../core/session-manager.ts';
 import { handlePhoneApi } from '../server/api.ts';
-import type { AdapterEvent } from '../core/types.ts';
+import crypto from 'crypto';
+import type { AdapterEvent, Approval } from '../core/types.ts';
 import type { PhoneRecord, RelayStore } from './relay-store.ts';
 import { sendPush, validSubscription, type PushSub, type VapidKeys } from './web-push.ts';
 
@@ -27,9 +28,12 @@ export interface RelayHostOptions {
   WebSocketImpl?: typeof WebSocket;
   /** Tests replace the push sender; the extension posts to the phone's push service. */
   sendPushImpl?: (sub: PushSub, payload: object, vapid: VapidKeys, subject: string) => Promise<'sent' | 'gone' | 'failed'>;
+  /** How long a window must stay idle before "finished" is sent. Tests shorten it. */
+  doneDelayMs?: number;
 }
 
 const CLOSE_REPLACED = 4001; // relay/src/room.ts: another window became host
+const DONE_DELAY_MS = 3000;
 const PING_MS = 30_000;
 const MAX_BACKOFF_MS = 30_000;
 
@@ -53,6 +57,8 @@ export class RelayHost {
   private visiblePeers = new Map<string, number>();
   /** Last status per IDE window ('' without multi-window), to spot a task finishing. */
   private lastStatus = new Map<string, string>();
+  /** Per window: a "finished" push waiting to see the agent stay idle. */
+  private doneTimers = new Map<string, NodeJS.Timeout>();
   private readonly onEvent = (event: AdapterEvent) => {
     this.e2e.broadcast({ k: 'evt', event }).catch(() => {});
     this.maybeNotify(event as AdapterEvent & { windowId?: string });
@@ -74,6 +80,8 @@ export class RelayHost {
     this.stopped = true;
     this.opts.sessionManager.off('adapter_event', this.onEvent);
     this.clearTimers();
+    for (const timer of this.doneTimers.values()) clearTimeout(timer);
+    this.doneTimers.clear();
     this.ws?.close(1000, 'stopping');
     this.ws = null;
     this.setStatus('stopped');
@@ -274,15 +282,41 @@ export class RelayHost {
 
   /** Approval needed, or a task finished: push to every phone that turned notifications on and isn't looking. */
   private maybeNotify(event: AdapterEvent & { windowId?: string }): void {
-    let kind: 'approval' | 'done' | null = null;
-    if (event.type === 'approval_requested') kind = 'approval';
-    if (event.type === 'status_changed') {
-      const key = event.windowId || '';
-      const before = this.lastStatus.get(key);
-      this.lastStatus.set(key, event.status);
-      if (event.status === 'idle' && (before === 'generating' || before === 'awaiting_approval')) kind = 'done';
+    const key = event.windowId || '';
+    if (event.type === 'approval_requested') {
+      this.cancelDone(key);
+      this.notify('approval', event.windowId, requestCategory(event.approval));
+      return;
     }
-    if (!kind) return;
+    if (event.type !== 'status_changed') return;
+    const before = this.lastStatus.get(key);
+    this.lastStatus.set(key, event.status);
+    if (event.status === 'idle' && (before === 'generating' || before === 'awaiting_approval')) {
+      // The agent can pause between steps; only a run that stays idle counts as finished.
+      this.cancelDone(key);
+      this.doneTimers.set(key, setTimeout(() => {
+        this.doneTimers.delete(key);
+        this.notify('done', event.windowId);
+      }, this.opts.doneDelayMs ?? DONE_DELAY_MS));
+    } else if (event.status !== 'idle') {
+      this.cancelDone(key);
+    }
+  }
+
+  private cancelDone(key: string): void {
+    const timer = this.doneTimers.get(key);
+    if (timer) clearTimeout(timer);
+    this.doneTimers.delete(key);
+  }
+
+  /** The window an event came from; events without a windowId come from the only window. */
+  private windowOf(windowId?: string): { id: string; name: string } {
+    const all = this.opts.sessionManager.registry.getAll();
+    const win = windowId ? all.find((w) => w.windowId === windowId) : all.length === 1 ? all[0] : undefined;
+    return { id: win?.windowId || windowId || '', name: win?.workspaceName || '' };
+  }
+
+  private notify(kind: 'approval' | 'done', windowId?: string, ask?: PushAsk): void {
     const now = Date.now();
     const VISIBILITY_TTL_MS = 15000;
     const watching = new Set(
@@ -293,11 +327,18 @@ export class RelayHost {
         })
         .map((p) => p.pub)
     );
-    const ws = event.windowId
-      ? this.opts.sessionManager.registry.getAll().find((w) => w.windowId === event.windowId)?.workspaceName || ''
-      : '';
+    const win = this.windowOf(windowId);
     // The payload is encrypted to the phone; the push service sees only that something was sent.
-    const payload = { kind, ws, url: `/p/${this.opts.store.room}` };
+    // It names the project and the kind of request, never the command, file or question: it can
+    // show on a locked screen. `win` keeps one notification per project on the phone.
+    const payload = {
+      kind,
+      ...(ask ? { ask } : {}),
+      ws: win.name,
+      win: crypto.createHash('sha256').update(win.id).digest('base64url').slice(0, 10),
+      at: now,
+      url: `/p/${this.opts.store.room}`,
+    };
     const send = this.opts.sendPushImpl || sendPush;
     for (const phone of this.opts.store.list()) {
       if (!phone.push || watching.has(phone.pub)) continue;
@@ -308,4 +349,20 @@ export class RelayHost {
       }).catch(() => {});
     }
   }
+}
+
+/** What a notification may say about a request. */
+export type PushAsk = 'command' | 'new-file' | 'edit-file' | 'question' | 'browser' | 'web' | 'tool' | 'other';
+
+/** The kind of request only: the phone shows "wants to run a command", never which command. */
+export function requestCategory(approval: Approval | undefined): PushAsk {
+  const kind = String(approval?.kind || '').toLowerCase();
+  if (kind === 'ask_question' || (approval?.options?.length ?? 0) > 0) return 'question';
+  if (kind === 'run_command') return 'command';
+  if (kind === 'write_to_file') return 'new-file';
+  if (kind.includes('file')) return 'edit-file';
+  if (kind.includes('browser')) return 'browser';
+  if (kind.includes('url')) return 'web';
+  if (kind.includes('mcp')) return 'tool';
+  return 'other';
 }

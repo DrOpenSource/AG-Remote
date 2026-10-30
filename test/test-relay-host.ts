@@ -10,7 +10,7 @@ import { RelayHost } from '../src/relay-host/relay-host.ts';
 import { RelayStore } from '../src/relay-host/relay-store.ts';
 import { PhoneE2E, generateIdentity } from '../src/pwa/e2e.js';
 import crypto from 'crypto';
-import { encryptPayload, vapidAuthorization, generateVapidKeys } from '../src/relay-host/web-push.ts';
+import { encryptPayload, vapidAuthorization, generateVapidKeys, sendPush } from '../src/relay-host/web-push.ts';
 
 console.log('='.repeat(75));
 console.log('🧪 RELAY TRANSPORT (EXTENSION SIDE) TEST SUITE (PHASE 3)');
@@ -194,6 +194,7 @@ async function runTests() {
       pushes.push({ endpoint: sub.endpoint, payload });
       return pushResult;
     },
+    doneDelayMs: 150,
   });
   const baseListeners = sm.listenerCount('adapter_event');
   host.start();
@@ -263,10 +264,12 @@ async function runTests() {
   await sleep(100);
   assert(pushes.length === 0, 'no push while the phone app is on screen');
   await a.request('POST', '/api/push/visible', { visible: false });
-  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap2' } } as any);
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap2', kind: 'run_command', description: 'Run SECRET_DESC', detail: 'curl -H "token: SECRET_CMD"', cwd: '/home/SECRET_DIR' } } as any);
   await until(() => pushes.length === 1);
   assert(pushes[0]?.endpoint === endpoint && pushes[0].payload.kind === 'approval' && pushes[0].payload.url === `/p/${relayStore.room}`, 'approval needed: push sent when the app is in the background');
-  assert(!JSON.stringify(pushes[0].payload).includes('ap2'), 'push payload carries no approval details');
+  assert(pushes[0].payload.ask === 'command', 'push says what kind of request it is (a command)');
+  assert(!/ap2|SECRET/.test(JSON.stringify(pushes[0].payload)), 'push carries no command, description, folder or approval id (it can show on a locked screen)');
+  assert(/^[\w-]{10}$/.test(pushes[0].payload.win) && typeof pushes[0].payload.at === 'number' && typeof pushes[0].payload.ws === 'string', 'push has the project name, a short window key and the time');
 
   // Unencrypted presence frame (zero latency / background sleep safeguard)
   a.send(JSON.stringify({ t: 'vis', v: true }));
@@ -281,8 +284,36 @@ async function runTests() {
   await until(() => pushes.length === 2);
   assert(pushes[1]?.payload.kind === 'done', 'task finished (generating -> idle): push sent');
   sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
-  await sleep(100);
+  await sleep(250);
   assert(pushes.length === 2, 'idle -> idle sends nothing');
+
+  // The agent pausing between steps is not "finished".
+  sm.emit('adapter_event', { type: 'status_changed', status: 'generating' } as any);
+  sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
+  await sleep(50);
+  sm.emit('adapter_event', { type: 'status_changed', status: 'generating' } as any);
+  await sleep(250);
+  assert(pushes.length === 2, 'idle for a moment, then working again: no "finished" push');
+  sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
+  await until(() => pushes.length === 3);
+  await sleep(250);
+  assert(pushes.length === 3 && pushes[2].payload.kind === 'done', 'stays idle: exactly one "finished" push');
+  sm.emit('adapter_event', { type: 'status_changed', status: 'generating' } as any);
+  sm.emit('adapter_event', { type: 'status_changed', status: 'idle' } as any);
+  sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap-q', kind: 'ask_question', question: 'Which DB?', options: ['a', 'b'] } } as any);
+  await until(() => pushes.length === 4);
+  await sleep(250);
+  assert(pushes.length === 4 && pushes[3].payload.kind === 'approval' && pushes[3].payload.ask === 'question', 'a question right after a run cancels its "finished" push and says it is a question');
+  assert(!JSON.stringify(pushes[3].payload).includes('Which DB'), 'the question text is not in the push');
+
+  // One notification per project: same window, same key; another window, another key.
+  sm.emit('adapter_event', { type: 'approval_requested', windowId: 'win-A', approval: { id: 'a1', kind: 'write_to_file' } } as any);
+  sm.emit('adapter_event', { type: 'approval_requested', windowId: 'win-B', approval: { id: 'b1', kind: 'replace_file_content' } } as any);
+  sm.emit('adapter_event', { type: 'approval_requested', windowId: 'win-A', approval: { id: 'a2', kind: 'run_command' } } as any);
+  await until(() => pushes.length === 7);
+  const [pA1, pB1, pA2] = pushes.slice(4, 7).map((p) => p.payload);
+  assert(pA1.win === pA2.win && pA1.win !== pB1.win && pA1.win !== pushes[3].payload.win, 'each project window gets its own notification key');
+  assert(pA1.ask === 'new-file' && pB1.ask === 'edit-file', 'new file and file edit are told apart');
   pushResult = 'gone';
   sm.emit('adapter_event', { type: 'approval_requested', approval: { id: 'ap3' } } as any);
   await until(() => !relayStore.get(a.phone.identity.pub)?.push);
@@ -291,6 +322,23 @@ async function runTests() {
   await a.request('POST', '/api/push/subscribe', { subscription: { endpoint, keys: uaKeys } });
   const off = await a.request('POST', '/api/push/unsubscribe', {});
   assert(off?.status === 200 && !relayStore.get(a.phone.identity.pub)?.push, 'phone can turn notifications off');
+
+  // A push waiting for a sleeping phone is replaced only by a newer one for the same project.
+  const realFetch = globalThis.fetch;
+  const topics: string[] = [];
+  globalThis.fetch = (async (_url: any, init: any) => {
+    topics.push(init.headers.Topic);
+    return new Response(null, { status: 201 });
+  }) as any;
+  try {
+    const vk = generateVapidKeys();
+    await sendPush({ endpoint, keys: uaKeys }, { kind: 'approval', win: 'abcDEF12_-' }, vk, 'https://relay.example');
+    await sendPush({ endpoint, keys: uaKeys }, { kind: 'done', win: 'abcDEF12_-' }, vk, 'https://relay.example');
+    await sendPush({ endpoint, keys: uaKeys }, { kind: 'done' }, vk, 'https://relay.example');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert(topics[0] === 'ag-abcDEF12_-' && topics[1] === topics[0] && topics[2] === 'ag-done', 'push topic is per project (approval and finished share it); old payloads keep the old topic');
 
   // Encryption (RFC 8291) and signing (RFC 8292), checked from the phone's and push service's side.
   const plaintext = '{"kind":"approval"}';

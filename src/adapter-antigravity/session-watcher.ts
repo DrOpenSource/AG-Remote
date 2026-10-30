@@ -451,6 +451,12 @@ export class SessionWatcher extends EventEmitter {
     return this.activeConvId;
   }
 
+  /** For diagnostics: the history folder holding this conversation's transcript, or null if none does. */
+  public historyFolderOf(id: string): string | null {
+    const p = this.transcriptOf(id);
+    return p ? path.dirname(path.dirname(path.dirname(path.dirname(p)))) : null;
+  }
+
   public listAllSessions(): Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> {
     const sessions: Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }> = [];
     try {

@@ -311,6 +311,27 @@ export class AntigravityAdapter implements IdeAdapter {
     return this.workspacePath;
   }
 
+  /** For diagnostics: what this window's channel shows the phone. No titles, message text or tokens. */
+  public async describe(): Promise<Record<string, unknown>> {
+    const ws = normalizeWorkspace(this.workspacePath);
+    const convs = this.ls ? await this.ls.listConversations().catch(() => null) : null;
+    const mine = (convs || []).filter(c => c.workspaces.includes(ws));
+    const snap = await this.getSnapshot();
+    const shown = this.watcher.getActiveConversationId();
+    return {
+      folder: ws,
+      liveBridge: !!this.ls,
+      server: this.ls?.describeEndpoint() || null,
+      conversationsListed: convs ? convs.length : null,
+      conversationsForFolder: convs ? mine.length : null,
+      // The phone can only show a conversation whose transcript is on disk
+      newestHistoryFolder: mine[0] ? (this.watcher.historyFolderOf(mine[0].cascadeId) || 'missing') : null,
+      shownConversation: shown ? shown.slice(0, 8) : null,
+      status: snap.status,
+      messages: snap.messages.length
+    };
+  }
+
   public setWorkspace(workspacePath: string): void {
     this.workspacePath = workspacePath;
     this.lastFollowCheck = 0;

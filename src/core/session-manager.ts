@@ -8,8 +8,9 @@ export interface SessionManagerOptions {
   /**
    * Multi-window mode: builds an adapter for another IDE window's folder. Each open window then gets its
    * own channel (conversation, approvals, status) and every event carries its `windowId`.
+   * `pid` is the window's extension host, when it registered one.
    */
-  createChannel?: (workspacePath: string) => IdeAdapter;
+  createChannel?: (workspacePath: string, pid?: number) => IdeAdapter;
   /** Window whose channel is the adapter passed to the constructor (the window hosting the server). */
   hostWindowId?: string;
 }
@@ -24,7 +25,7 @@ export class SessionManager extends EventEmitter {
   public logger: AuditLogger;
   public registry: WindowRegistry;
   private isConnected: boolean = false;
-  private createChannel?: (workspacePath: string) => IdeAdapter;
+  private createChannel?: (workspacePath: string, pid?: number) => IdeAdapter;
   private hostWindowId: string | null;
   private channels: Map<string, IdeAdapter> = new Map();
 
@@ -66,6 +67,18 @@ export class SessionManager extends EventEmitter {
     }
   };
 
+  /** For diagnostics: each registered window and what its channel shows the phone. */
+  public async describeChannels(): Promise<Array<Record<string, unknown>>> {
+    const out: Array<Record<string, unknown>> = [];
+    for (const win of this.registry.getAll()) {
+      const channel = this.isMultiWindow() ? this.channels.get(win.windowId) : this.adapter;
+      let shows: Record<string, unknown> | null = null;
+      try { shows = channel?.describe ? await channel.describe() : null; } catch (err: any) { shows = { error: String(err?.message || err) }; }
+      out.push({ window: win.workspaceName, pid: win.pid, host: win.windowId === this.hostWindowId, shows });
+    }
+    return out;
+  }
+
   /** Detaches from the shared window registry (a window that failed to become host). */
   public dispose(): void {
     this.registry.off('change', this.onRegistryChange);
@@ -90,7 +103,7 @@ export class SessionManager extends EventEmitter {
     const live = new Set(windows.map(w => w.windowId));
     for (const win of windows) {
       if (this.channels.has(win.windowId)) continue;
-      const channel = this.createChannel!(win.workspacePath);
+      const channel = this.createChannel!(win.workspacePath, win.pid);
       this.channels.set(win.windowId, channel);
       this.wireChannel(win.windowId, channel);
       channel.connect().catch(() => {});

@@ -327,7 +327,56 @@ async function run() {
   });
   await macBridge.listConversations();
   assert(macBridge.describeEndpoint()?.pid === 4043, 'language_server: the attached server still wins over a leftover (unchanged)');
-  for (const s of [agyX, agyY, lsLive, lsLeftover]) s.server.close();
+
+  console.log('\n[Suite 2d] agy without --add-dir: each window finds its agent by its parent (the extension host)');
+  // The diagnostics as reported (Windows, 0.2.4): the EduHub window's own agy (parent 10116) has no
+  // chat loaded yet; the other lists CareerForge's. Both windows were on 17392.
+  const agyCareer = await miniAgy([career]);
+  const agyEdu = await miniAgy([]);
+  const reported = (): LsServer[] => [
+    { pid: 17392, workspaceId: null, token: TOKEN, ports: [agyCareer.port], kind: 'agy', appDataDir: 'antigravity', attached: false, ppid: 14684 },
+    { pid: 14732, workspaceId: null, token: TOKEN, ports: [agyEdu.port], kind: 'agy', appDataDir: 'antigravity', attached: false, ppid: 10116 }
+  ];
+  const eduOwn = new LsBridge({ discover: async () => reported(), discoveryCooldownMs: 0, workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\EduHub', ownerPid: 10116 });
+  const eduConvs = await eduOwn.listConversations();
+  assert(eduOwn.describeEndpoint()?.pid === 14732 && eduOwn.describeEndpoint()?.matchedBy === 'parent', "EduHub window talks to the agy its extension host started, even with no chat in it");
+  assert(!!eduConvs && !eduConvs.some(c => c.workspaces.includes(career)), "EduHub window doesn't list CareerForge's chat");
+  const careerOwn = new LsBridge({ discover: async () => reported(), discoveryCooldownMs: 0, workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\CareerForge AI', ownerPid: 14684 });
+  await careerOwn.listConversations();
+  assert(careerOwn.describeEndpoint()?.pid === 17392 && careerOwn.describeEndpoint()?.matchedBy === 'parent', 'CareerForge window talks to its own agy');
+
+  // Windows restored together at IDE start: this window's agy may not listen yet when its bridge looks.
+  let ownUp = false;
+  const starting = new LsBridge({
+    discover: async () => reported().filter(s => ownUp || s.pid !== 14732),
+    discoveryCooldownMs: 0,
+    workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\EduHub',
+    ownerPid: 10116
+  });
+  await starting.listConversations();
+  assert(starting.describeEndpoint()?.pid === 17392 && starting.describeEndpoint()?.matchedBy === 'unconfirmed', "while its own agy is starting, another window's lone agy is only a provisional choice");
+  ownUp = true;
+  await new Promise(r => setTimeout(r, 5));
+  await starting.listConversations();
+  // Rechecks reuse the last process list for a minute; a failing call or a minute later rediscovers.
+  (starting as any).knownServersAt = 0;
+  await starting.listConversations();
+  assert(starting.describeEndpoint()?.pid === 14732 && starting.describeEndpoint()?.matchedBy === 'parent', 'once its own agy starts, the window moves to it');
+
+  // A leftover agy from a closed window of the same folder still lists its chats; this window's own agy wins.
+  const leftover = await miniAgy([career]);
+  const withLeftover = new LsBridge({
+    discover: async () => [
+      { pid: 9001, workspaceId: null, token: TOKEN, ports: [leftover.port], kind: 'agy', attached: false, ppid: 7777 },
+      ...reported()
+    ],
+    discoveryCooldownMs: 0,
+    workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\CareerForge AI',
+    ownerPid: 14684
+  });
+  await withLeftover.listConversations();
+  assert(withLeftover.describeEndpoint()?.pid === 17392, "a closed window's leftover agy that lists this folder loses to this window's own");
+  for (const s of [agyX, agyY, lsLive, lsLeftover, agyCareer, agyEdu, leftover]) s.server.close();
 
   console.log('\n[Suite 3] Adapter wired to the bridge');
   const brain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-brain-'));
@@ -404,6 +453,18 @@ async function run() {
   });
   assert(agyReport.includes('agy') && agyReport.includes('data ~/.gemini/antigravity') && agyReport.includes('← this window'), "report names agy servers, their data folder and this window's server");
   assert(agyReport.includes('Connected to: pid 51 (agy)') && !agyReport.includes(TOKEN), 'report shows the agy it connected to, no token');
+  assert(/pid 20: .*lists \d+ conversation\(s\), \d+ for this window/.test(report), 'report asks every server for its own conversations');
+  assert(report.includes("Newest one's history: in"), "report says where the window's newest conversation's transcript is");
+  const fromHost = await collectDiagnostics({
+    workspacePath: brain, brainDir: brain, extensionVersion: '0.2.5', discover: async () => [],
+    hostReport: { version: '0.2.4', relay: 'online', relayPhones: 1, windows: [
+      { window: 'proj', pid: 10116, host: true, shows: { folder: brain, server: { pid: 14732, matchedBy: 'parent' }, conversationsListed: 1, conversationsForFolder: 1, newestHistoryFolder: 'missing', shownConversation: null, messages: 0, status: 'idle' } }
+    ] }
+  });
+  assert(fromHost.includes('differs from this window') && fromHost.includes('Relay: online; phones paired through it: 1'), "report flags a serving window on another version and shows the relay");
+  assert(/`proj` \(serving\), extension host pid 10116 ← this window: agy pid 14732 \(parent\); 1 of 1 .*history ⚠ missing; shows no conversation; 0 message/.test(fromHost), "report shows what the serving window shows the phone for each window");
+  const noHost = await collectDiagnostics({ workspacePath: brain, brainDir: brain, discover: async () => [], hostReport: null });
+  assert(noHost.includes('⚠ No answer'), 'report says when the serving window is too old to answer');
 
   console.log('\n[Suite 3c] Chat history in either folder');
   // Antigravity moved history from ~/.gemini/antigravity-ide/brain to ~/.gemini/antigravity/brain (Oct 2026)
@@ -460,6 +521,10 @@ async function run() {
   state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
   await (idleAdapter as any).pollLive();
   assert((await idleAdapter.getSnapshot()).status === 'idle', 'back to IDLE: Working clears without any new message');
+  const described = await idleAdapter.describe();
+  assert(described.shownConversation === CASCADE.slice(0, 8) && (described.messages as number) >= 1 && described.newestHistoryFolder === idleBrain && described.conversationsForFolder === 1,
+    'describe(): which conversation the phone gets, its message count and where its history is');
+  assert(!JSON.stringify(described).includes('left unanswered') && !JSON.stringify(described).includes(TOKEN), 'describe(): no message text, no token');
   await idleAdapter.disconnect();
 
   // Without a live status (no agent connection), the file guess still works, but not forever

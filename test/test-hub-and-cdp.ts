@@ -112,6 +112,15 @@ async function runTests() {
   const unpairFromBrowser = await postJson('http://127.0.0.1:49235/api/hub/relay-unpair', { pub: 'pk2' }, undefined, { Origin: 'null' });
   assert(!unpairFromBrowser.ok && phones.length === 1, 'a web page cannot unpair phones through loopback');
 
+  // Copy Diagnostics in a linked window asks the host what each window's channel shows
+  const noDiag = await postJson('http://127.0.0.1:49235/api/hub/diagnostics', {});
+  assert(noDiag.error === 'Not available', 'diagnostics: not available until the host provides it');
+  server.setHostControl({ diagnostics: async () => ({ version: '9.9.9', windows: [{ window: 'proj', pid: 1, host: true, shows: { messages: 3 } }] }) });
+  const diag = await postJson('http://127.0.0.1:49235/api/hub/diagnostics', {});
+  assert(diag.version === '9.9.9' && diag.windows?.[0]?.shows?.messages === 3, "diagnostics: a linked window gets the host's view");
+  const diagFromBrowser = await postJson('http://127.0.0.1:49235/api/hub/diagnostics', {}, undefined, { Origin: 'https://evil.example' });
+  assert(!diagFromBrowser.windows, 'diagnostics: a web page cannot read it through loopback');
+
   // --- Suite 3: Live bridge approval options ---
   console.log('\n[Suite 3] Live Bridge Approval Options (verified wire shapes, NOTES.md §13)');
   const p = { cascadeId: 'c', trajectoryId: 't', stepIndex: 4, kind: 'permission', stepType: 'RUN_COMMAND', commandLine: 'echo hi' };

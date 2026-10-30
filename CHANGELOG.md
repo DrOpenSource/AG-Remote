@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased: Safer defaults and relay limits
+## 0.2.5: Every window shows its own chat, safer defaults
 
-- **Every window shows its own conversation.** With two or more Antigravity windows open, one window's phone tab could stay empty. Some Antigravity builds start each window's agent without saying which folder it belongs to, so every window connected to the first agent found, which only knows its own window's chats. Each window now finds its agent by asking which one holds its conversations. A window without a chat yet picks up its first one within about 10 seconds.
+> **After installing this update, quit Antigravity completely** (File → Exit) and open it again, so every window runs the new version.
+
+- **Every window shows its own conversation.** With two or more Antigravity windows open, the phone could stay connected but empty, for one window or for all of them. Recent Antigravity builds start each window's agent without saying which folder it belongs to, so every window connected to whichever agent was found first, and that agent only knows its own window's chats. Each window now finds the agent its own window started; failing that, the one holding its conversations. A window whose agent is still starting, or that has no chat yet, keeps checking and switches within about a minute.
+- **Copy Diagnostics shows what the phone sees.** The report now also asks every agent for its chats, checks that the shown chat's history is on disk, and shows the view of the window serving the phone: its version (with a warning if it differs from this window's), the relay status, and for each window which agent it uses, which conversation it shows and how many messages. Still no tokens, chat titles or message text.
 - **Relay-only by default.** New installs, and anyone who never changed `agRemote.transport`, now connect only through the end-to-end encrypted relay, and the extension's local server accepts this PC only. Before, it also opened a plain-HTTP server on port 49222 to everyone on the same Wi-Fi, which is risky on café or office networks. To keep pairing with the Wi-Fi PIN, set `agRemote.transport` to `"both"`. Phones paired through the relay are not affected.
 - **Pairing codes can't be guessed at speed.** The relay now allows 10 pairing-code lookups a minute per IP. The phone shows "Too many tries, wait a minute" if you hit it.
 - **One address can't flood the relay.** Each IP can open up to 60 relay connections a minute, far above what a phone or PC needs, even several behind one mobile-carrier address.

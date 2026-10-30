@@ -26,6 +26,8 @@ export interface HostControl {
   unpairRelayPhone?: (pub: string) => Promise<void>;
   /** Unpairs every phone (Wi-Fi and relay); resolves true if relay phones were included. */
   unpairAll?: () => Promise<boolean>;
+  /** The host's view for "Copy Diagnostics" in any window: its version and what each window's channel shows. */
+  diagnostics?: () => Promise<unknown>;
 }
 
 export function isLoopbackAddress(ip: string): boolean {
@@ -326,6 +328,11 @@ export class RemoteServer {
           res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify(payload));
         };
+        if (req.method === 'POST' && url.pathname === '/api/hub/diagnostics') {
+          if (!isLoopback) return sendJson(403, { error: 'Only IDE windows on this PC can read diagnostics' });
+          if (!control.diagnostics) return sendJson(404, { error: 'Not available' });
+          return sendJson(200, await control.diagnostics());
+        }
         const pairingPaths = ['/api/hub/relay-pair', '/api/hub/relay-phones', '/api/hub/relay-unpair', '/api/hub/unpair-all'];
         if (req.method === 'POST' && pairingPaths.includes(url.pathname)) {
           if (!isLoopback) return sendJson(403, { error: 'Only IDE windows on this PC can manage pairing' });

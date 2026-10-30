@@ -65,5 +65,7 @@ export interface IdeAdapter {
   listSessions?(): Promise<Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>> | Array<{ id: string; mtime: number; title: string; workspace: string; isCurrent: boolean }>;
   setActiveSession?(id: string): Promise<boolean>;
   setWorkspace?(workspacePath: string): void;
+  /** For diagnostics: what this channel would show the phone. No titles, message text or tokens. */
+  describe?(): Promise<Record<string, unknown>>;
 }
 

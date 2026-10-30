@@ -59,10 +59,18 @@ async function run() {
 
   sm.registry.register({ windowId: 'win-a', workspacePath: 'C:/proj/a', isFocused: true });
   await sm.start();
-  sm.registry.register({ windowId: 'win-b', workspacePath: 'C:/proj/b', isFocused: false });
+  const channelPids: Array<number | undefined> = [];
+  (sm as any).createChannel = (ws: string, pid?: number) => { channelPids.push(pid); const a = new FakeAdapter(ws); created.push(a); return a; };
+  sm.registry.register({ windowId: 'win-b', workspacePath: 'C:/proj/b', isFocused: false, pid: 10116 });
   await tick();
   assert(created.length === 1 && created[0].workspace === 'C:/proj/b', 'a second window gets its own channel');
   assert(created[0].connected, 'the new channel is connected');
+  assert(channelPids[0] === 10116, "the channel gets the window's extension host pid (to find that window's agy)");
+  (created[0] as any).describe = async () => ({ messages: 1 });
+  const described = await sm.describeChannels();
+  const descB = described.find(d => d.window === 'b');
+  assert(described.length === 2 && descB?.pid === 10116 && (descB?.shows as any)?.messages === 1 && described.find(d => d.window === 'a')?.host === true,
+    'describeChannels: every window, the serving one marked, with what its channel shows');
 
   await sm.sendPrompt('to B', 'win-b');
   await sm.approve('x', undefined, 'allow_once', 'win-b');

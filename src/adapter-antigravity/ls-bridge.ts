@@ -213,13 +213,15 @@ export function parsePsOutput(raw: string): Array<ParsedServer & { pid: number; 
 /**
  * Order live-call candidates so the right server is tried first:
  *  1. agy for this window's folder (each window has its own; another window's would act on the wrong chat);
- *  2. attached to a running IDE (--parent_pipe_path; a Mac was seen with a leftover server next to the live one);
- *  3. not orphaned (re-parented to launchd/init, ppid 1).
+ *  2. agy started by this window's extension host (`ownerPid`), for builds that start agy without --add-dir;
+ *  3. attached to a running IDE (--parent_pipe_path; a Mac was seen with a leftover server next to the live one);
+ *  4. not orphaned (re-parented to launchd/init, ppid 1).
  * Stable otherwise. Pure; exported for tests.
  */
-export function rankLanguageServers<T extends Pick<LsServer, 'ppid' | 'attached' | 'addDirs'>>(procs: T[], workspace?: string): T[] {
+export function rankLanguageServers<T extends Pick<LsServer, 'ppid' | 'attached' | 'addDirs' | 'kind'>>(procs: T[], workspace?: string, ownerPid?: number): T[] {
   const ws = workspace ? normalizeWorkspace(workspace) : '';
-  const score = (p: T) => (ws && p.addDirs?.includes(ws) ? 4 : 0) + (p.attached ? 2 : 0) + (p.ppid === 1 ? -1 : 0);
+  const own = (p: T) => !!ownerPid && p.kind === 'agy' && p.ppid === ownerPid;
+  const score = (p: T) => (ws && p.addDirs?.includes(ws) ? 4 : 0) + (own(p) ? 3 : 0) + (p.attached ? 2 : 0) + (p.ppid === 1 ? -1 : 0);
   return procs.map((p, i) => ({ p, i })).sort((a, b) => score(b.p) - score(a.p) || a.i - b.i).map(x => x.p);
 }
 
@@ -287,11 +289,13 @@ interface Endpoint { server: LsServer; port: number; scheme: 'http' | 'https' }
 /**
  * Why this bridge chose its server (shown in diagnostics):
  *  folder        an agy started with --add-dir for this window's folder
- *  conversations an agy whose conversation list includes this window's folder (agy started without --add-dir)
+ *  parent        an agy started by this window's extension host (agy started without --add-dir)
+ *  conversations an agy whose conversation list includes this window's folder
  *  only          the only reachable server, or an older shared language_server
- *  unconfirmed   several agy and none claims this window yet (no chat in it): rechecked every discovery cooldown
+ *  unconfirmed   no agy claims this window yet (no chat in it, or its agy is still starting): rechecked
+ *                every discovery cooldown
  */
-export type EndpointMatch = 'folder' | 'conversations' | 'only' | 'unconfirmed';
+export type EndpointMatch = 'folder' | 'parent' | 'conversations' | 'only' | 'unconfirmed';
 
 /** Longest an unconfirmed window's rechecks reuse the last process list before discovering again. */
 const REDISCOVER_MS = 60_000;
@@ -310,10 +314,13 @@ export class LsBridge {
   private verifyTimeoutMs: number;
   /** The IDE window's folder: picks that window's agy server when each window has its own. */
   private workspace?: string;
+  /** pid of the window's extension host, which starts that window's agy (seen on Windows, Oct 2026). */
+  private ownerPid?: number;
 
-  constructor(opts: { discover?: Discover; timeoutMs?: number; discoveryCooldownMs?: number; verifyTimeoutMs?: number; workspace?: string } = {}) {
+  constructor(opts: { discover?: Discover; timeoutMs?: number; discoveryCooldownMs?: number; verifyTimeoutMs?: number; workspace?: string; ownerPid?: number } = {}) {
     this.discover = opts.discover || discoverLanguageServers;
     this.workspace = opts.workspace;
+    this.ownerPid = opts.ownerPid;
     this.timeoutMs = opts.timeoutMs ?? 4000;
     this.discoveryCooldownMs = opts.discoveryCooldownMs ?? 10000;
     this.verifyTimeoutMs = opts.verifyTimeoutMs ?? 3000;
@@ -482,13 +489,14 @@ export class LsBridge {
   /**
    * Picks this window's server. Only workspace-less servers hold live agent state; language_server's
    * per-workspace copies are stale, so never fall back to them. Ranked: agy for this folder first,
-   * then attached, then not orphaned. An agy started without --add-dir can't be matched by folder, so
-   * each one is asked for its conversations: every agy lists only its own window's chats, and acting
-   * through another window's agy would show (and answer) the wrong project.
+   * then this window's own agy (its parent is our extension host), then attached, then not orphaned.
+   * An agy started without --add-dir can't be matched by folder, so its parent decides, or else each one
+   * is asked for its conversations: every agy lists only its own window's chats, and acting through
+   * another window's agy would show (and answer) the wrong project.
    */
   private async chooseEndpoint(servers: LsServer[]): Promise<{ ep: Endpoint; matchedBy: EndpointMatch } | null> {
     const ws = this.workspace ? normalizeWorkspace(this.workspace) : '';
-    const ranked = rankLanguageServers(servers.filter(s => !s.workspaceId), this.workspace);
+    const ranked = rankLanguageServers(servers.filter(s => !s.workspaceId), this.workspace, this.ownerPid);
     let fallback: Endpoint | null = null;
     let reachable = 0;
     for (const server of ranked) {
@@ -498,11 +506,14 @@ export class LsBridge {
       // Older shared language_server, or no folder to match: the ranking (attached first) decides, as before.
       if (!ws || server.kind !== 'agy') return { ep, matchedBy: 'only' };
       if (server.addDirs?.includes(ws)) return { ep, matchedBy: 'folder' };
+      if (this.ownerPid && server.ppid === this.ownerPid) return { ep, matchedBy: 'parent' };
       if (await this.listsWorkspace(ep, ws)) return { ep, matchedBy: 'conversations' };
       if (!fallback) fallback = ep;
     }
     if (!fallback) return null;
-    return { ep: fallback, matchedBy: reachable === 1 ? 'only' : 'unconfirmed' };
+    // A lone agy started by another extension host is another window's: ours may still be starting
+    // (windows restored together at IDE start), so keep rechecking instead of settling on it.
+    return { ep: fallback, matchedBy: reachable === 1 && !this.ownerPid ? 'only' : 'unconfirmed' };
   }
 
   /** The first port and scheme on which `server` answers, or null. */

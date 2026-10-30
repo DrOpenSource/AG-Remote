@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Open VSX](https://img.shields.io/open-vsx/v/dr-opensource/ag-remote?label=Open%20VSX)](https://open-vsx.org/extension/dr-opensource/ag-remote)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/dr-opensource.ag-remote?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=dr-opensource.ag-remote)
-[![VSIX Bundle](https://img.shields.io/badge/VSIX%20Size-%3C98%20KB-success.svg)]()
+[![VSIX Bundle](https://img.shields.io/badge/VSIX%20Size-120%20KB-success.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational.svg)]()
 
 > Walk away from your desk without your Antigravity agent stalling on a permission prompt.

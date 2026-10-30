@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.6: Notifications you can tell apart, and the phone is live as soon as you look
+
+> **After installing this update, quit Antigravity completely** (File → Exit) and open it again, so every window runs the new version. The phone app updates itself the next time you open it.
+
+- **Notifications say which project and what the agent wants.** The title is the project's name, and the text says what kind of request it is: "The agent wants to run a command", "wants to edit a file", "has a question for you", "finished its task". The command, file name and question are never shown, because a notification can appear on a locked screen. Open the app to see them.
+- **One notification per project.** Two projects asking at once now give two notifications instead of one replacing the other, and "finished" replaces that project's approval notification once it no longer needs you. Each one shows when it happened and carries the app's icon.
+- **No extra "finished" notifications.** The agent often pauses between steps; "finished" is now sent only once it has stayed idle for a few seconds.
+- **Opening the app clears its notifications,** and tapping one shows what it was about while the app catches up.
+- **Live as soon as you turn the screen on.** If the phone kept its connection while the screen was off, the app checks it with one quick ping and carries on, with no reconnect and no new handshake. Before, it threw away the connection after 10 seconds of quiet, and the several wake-up signals a phone sends at once could restart the connection two or three times in a row.
+- **Faster catch-up when the phone did drop the connection.** The last screen stays visible with "Reconnecting...", and the window you're looking at loads first, at the same time as the window list.
+- **Proper app icon** on the Home Screen (Android and iPhone) and in notifications.
+
 ## 0.2.5: Your PC decides which phones can pair, and every window shows its own chat
 
 > **After installing this update, quit Antigravity completely** (File → Exit) and open it again, so every window runs the new version.

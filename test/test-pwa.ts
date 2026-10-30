@@ -1,3 +1,4 @@
+import vm from 'vm';
 import http from 'http';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { SessionManager } from '../src/core/session-manager.ts';
@@ -76,6 +77,50 @@ async function runTests() {
   const swRes = await fetchUrl('/sw.js');
   assert(swRes.status === 200, 'GET /sw.js returns HTTP 200 OK');
   assert(swRes.body.includes('CACHE_NAME'), 'sw.js provides service worker cache implementation');
+
+  // 6. Everything the service worker pre-caches exists: one missing file fails the whole install.
+  const assetList = swRes.body.match(/const ASSETS = \[([\s\S]*?)\]/)?.[1] || '';
+  const assets = [...assetList.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const missing: string[] = [];
+  for (const a of assets) if ((await fetchUrl(a)).status !== 200) missing.push(a);
+  assert(assets.length >= 7 && missing.length === 0, `every pre-cached file is served (${assets.length} files${missing.length ? `; missing ${missing.join(', ')}` : ''})`);
+  const iconRes = await fetchUrl('/icons/icon-192.png');
+  assert(iconRes.type.includes('image/png'), 'notification icon is served as image/png');
+  assert(manifestRes.body.includes('/icons/icon-512.png'), 'manifest lists a 512 px PNG icon for installing the app');
+
+  // 7. What the phone shows for a push: run sw.js's push handler with a fake registration.
+  const handlers: Record<string, (e: any) => void> = {};
+  const shown: { title: string; opts: any }[] = [];
+  vm.runInNewContext(swRes.body, {
+    self: {
+      addEventListener: (type: string, fn: (e: any) => void) => { handlers[type] = fn; },
+      registration: { showNotification: async (title: string, opts: any) => { shown.push({ title, opts }); } },
+      clients: { claim() {}, matchAll: async () => [] },
+      location: { origin: 'https://relay.example' },
+      skipWaiting() {},
+    },
+    caches: { open: async () => ({ addAll: async () => {}, put: async () => {} }), keys: async () => [] },
+    URL, Response, console,
+  });
+  const push = async (data: object) => {
+    let done: Promise<any> = Promise.resolve();
+    handlers.push({ data: { json: () => data }, waitUntil: (p: Promise<any>) => { done = p; } });
+    await done;
+    return shown[shown.length - 1];
+  };
+  const cmd = await push({ kind: 'approval', ask: 'command', ws: 'shop-app', win: 'AAAAAAAAAA', at: 1700000000000, url: '/p/r' });
+  assert(cmd.title === 'shop-app' && cmd.opts.body === 'The agent wants to run a command.', 'approval: title is the project, body says it wants to run a command');
+  assert(cmd.opts.tag === 'ag-remote-AAAAAAAAAA' && cmd.opts.renotify === true && cmd.opts.timestamp === 1700000000000, 'one notification per project, with the time of the request');
+  assert(cmd.opts.icon === '/icons/icon-192.png' && cmd.opts.badge === '/icons/badge-96.png', 'notification uses the app icon and badge');
+  const file = await push({ kind: 'approval', ask: 'edit-file', ws: 'shop-app', win: 'AAAAAAAAAA' });
+  const q = await push({ kind: 'approval', ask: 'question', ws: 'blog', win: 'BBBBBBBBBB' });
+  const fin = await push({ kind: 'done', ws: 'shop-app', win: 'AAAAAAAAAA' });
+  assert(file.opts.body === 'The agent wants to edit a file.' && q.opts.body === 'The agent has a question for you.', 'file edit and question read differently');
+  assert(fin.opts.body === 'The agent finished its task.' && fin.opts.tag === cmd.opts.tag && q.opts.tag !== cmd.opts.tag, '"finished" replaces that project\'s approval; another project keeps its own');
+  const old = await push({ kind: 'approval', ws: 'legacy' });
+  const odd = await push({ kind: 'approval', ask: '<script>', ws: '' });
+  assert(old.title === 'legacy' && old.opts.body === 'The agent needs your permission.' && old.opts.tag === 'ag-remote-approval', 'a PC before 0.2.6 (no kind of request, no window key) still gets a clear notification');
+  assert(odd.title === 'Antigravity' && odd.opts.body === 'The agent needs your permission.', 'unknown kind or missing project falls back to plain text');
 
   console.log('\n[Suite 2] End-to-End Phone Flow Simulation');
   

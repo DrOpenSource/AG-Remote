@@ -25,6 +25,8 @@ let heartbeatTimer: NodeJS.Timeout | null = null;
 let activeWindowId: string | null = null;
 let hubPort: number = 49222;
 let isHost = false;
+/** Set while this window hosts the phone server: its view for diagnostics. */
+let hostDiagnostics: (() => Promise<any>) | null = null;
 
 export async function activate(context: vscodeTypes.ExtensionContext): Promise<void> {
   // Dynamically resolve 'vscode' API module provided by extension host
@@ -215,9 +217,14 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       }
     }),
     vscode.commands.registerCommand('ag-remote.diagnostics', async () => {
+      // The window serving the phone runs every window's channel with its own code, so ask it what it sees.
+      // A host on 0.2.4 or older has no such endpoint and answers with an error.
+      const fromHost = isHost && hostDiagnostics ? await hostDiagnostics() : await postHubJson(port, '/api/hub/diagnostics', {});
       const report = await collectDiagnostics({
         workspacePath: currentWorkspace,
-        extensionVersion: context.extension?.packageJSON?.version
+        extensionVersion: context.extension?.packageJSON?.version,
+        hostsPhoneServer: isHost,
+        hostReport: fromHost && Array.isArray(fromHost.windows) ? fromHost : null
       });
       await vscode.env.clipboard.writeText(report);
       const doc = await vscode.workspace.openTextDocument({ content: report, language: 'markdown' });
@@ -238,12 +245,13 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
   const becomeHost = async (): Promise<boolean> => {
     // A bridge per window: newer Antigravity builds run one agent server (agy) per window, and actions
     // must reach that window's. With the older single shared server, every bridge finds the same one.
-    const bridgeFor = (workspacePath: string) =>
-      process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge({ workspace: workspacePath });
-    const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge: bridgeFor(currentWorkspace) });
+    // A window's agy is a child of that window's extension host, whose pid each window registers.
+    const bridgeFor = (workspacePath: string, ownerPid?: number) =>
+      process.env.AG_REMOTE_LIVE_BRIDGE === '0' ? null : new LsBridge({ workspace: workspacePath, ownerPid });
+    const adapter = new AntigravityAdapter(currentWorkspace, {}, { lsBridge: bridgeFor(currentWorkspace, process.pid) });
     const sm = new SessionManager(adapter, undefined, {
       hostWindowId: activeWindowId!,
-      createChannel: (workspacePath: string) => new AntigravityAdapter(workspacePath, {}, { lsBridge: bridgeFor(workspacePath) })
+      createChannel: (workspacePath: string, pid?: number) => new AntigravityAdapter(workspacePath, {}, { lsBridge: bridgeFor(workspacePath, pid) })
     });
     const srv = new RemoteServer(sm, { port, host, pwaDir });
     try {
@@ -259,8 +267,15 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
     isHost = true;
     sm.registry.register(identity());
     if (relayOn) await startRelay(sm, srv);
+    hostDiagnostics = async () => ({
+      version: context.extension?.packageJSON?.version,
+      relay: relayHost ? relayHost.getStatus() : 'off',
+      relayPhones: relayHost ? relayHost.pairedPhones().length : 0,
+      windows: await sm.describeChannels()
+    });
     srv.setHostControl({
       unpairAll: unpairAllHere,
+      diagnostics: hostDiagnostics,
       ...(relayHost && {
         relayPairUrl: () => relayHost!.createPairingUrl(),
         relayPhones: () => relayHost!.pairedPhones(),

@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased: Safer defaults and relay limits
+## 0.2.5: Your PC decides which phones can pair
 
+> If a phone gives up on pairing after about 20 seconds while your PC is still asking, it has the old app open. Close the app on the phone, open it again, and pair once more.
+
+- **Allow this phone?** A phone that scans the QR code or types the pairing code is no longer paired straight away. Your PC asks first: in the pairing panel (in any Antigravity window), or as a notification. Both screens show the same 4-digit code, so you can tell your phone from someone else's. If nobody answers within 2 minutes, the phone is refused. Someone who saw or guessed your code still can't pair without your click.
 - **Relay-only by default.** New installs, and anyone who never changed `agRemote.transport`, now connect only through the end-to-end encrypted relay, and the extension's local server accepts this PC only. Before, it also opened a plain-HTTP server on port 49222 to everyone on the same Wi-Fi, which is risky on café or office networks. To keep pairing with the Wi-Fi PIN, set `agRemote.transport` to `"both"`. Phones paired through the relay are not affected.
 - **Pairing codes can't be guessed at speed.** The relay now allows 10 pairing-code lookups a minute per IP. The phone shows "Too many tries, wait a minute" if you hit it.
 - **One address can't flood the relay.** Each IP can open up to 60 relay connections a minute, far above what a phone or PC needs, even several behind one mobile-carrier address.

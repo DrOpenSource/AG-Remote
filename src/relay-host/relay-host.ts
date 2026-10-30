@@ -7,6 +7,13 @@ import { sendPush, validSubscription, type PushSub, type VapidKeys } from './web
 
 export type RelayStatus = 'connecting' | 'online' | 'offline' | 'replaced' | 'stopped';
 
+/** A phone waiting to be allowed. `code` is the check code its screen shows too. */
+export interface WaitingPhone {
+  id: string;
+  name: string;
+  code: string;
+}
+
 export interface RelayHostOptions {
   /** e.g. https://remote.taqnik.in */
   relayUrl: string;
@@ -14,6 +21,8 @@ export interface RelayHostOptions {
   sessionManager: SessionManager;
   onStatus?: (status: RelayStatus) => void;
   onPaired?: (phone: PhoneRecord) => void;
+  /** A phone used a valid QR or code and waits until answerApproval() allows or denies it. */
+  onApprovalNeeded?: (request: WaitingPhone) => void;
   /** Tests inject a WebSocket class; the extension uses Node's built-in one. */
   WebSocketImpl?: typeof WebSocket;
   /** Tests replace the push sender; the extension posts to the phone's push service. */
@@ -103,6 +112,15 @@ export class RelayHost {
     return this.e2e.readyPeers().length;
   }
 
+  pendingApprovals(): WaitingPhone[] {
+    return this.e2e.pendingApprovals();
+  }
+
+  /** Allows or denies a waiting phone. False if it stopped waiting (answered, timed out or left). */
+  answerApproval(id: string, allow: boolean): boolean {
+    return this.e2e.answerApproval(id, allow);
+  }
+
   /** Forgets one phone and drops its session. */
   async revoke(pub: string): Promise<void> {
     await this.e2e.revoke(pub);
@@ -139,7 +157,9 @@ export class RelayHost {
         else this.visiblePeers.delete(peerId);
       },
       onPhoneGone: (peerId: string) => this.visiblePeers.delete(peerId),
-      onPaired: (phone: PhoneRecord) => this.opts.onPaired?.(phone)
+      onPaired: (phone: PhoneRecord) => this.opts.onPaired?.(phone),
+      // Every new phone needs a yes on the PC, so a leaked or guessed code alone can't pair one.
+      onApprovalNeeded: (request: WaitingPhone) => this.opts.onApprovalNeeded?.(request)
     });
   }
 

@@ -95,14 +95,27 @@ async function runTests() {
   assert(noRelay.error === 'Relay is not enabled', 'relay-phones reports relay off before the host sets control');
   const phones = [{ pub: 'pk1', name: 'Android phone', pairedAt: 1 }, { pub: 'pk2', name: 'iPhone', pairedAt: 2 }];
   let unpairedAll = false;
+  const waiting = [{ id: 'w1', name: 'iPhone', code: '0427' }];
+  const answers: [string, boolean][] = [];
   server.setHostControl({
     relayPairUrl: async () => 'https://relay.example/p/room#secret',
     relayPhones: () => phones,
+    relayWaiting: () => waiting,
+    answerRelayPhone: (id, allow) => { answers.push([id, allow]); return id === 'w1'; },
     unpairRelayPhone: async (pub) => { phones.splice(phones.findIndex(p => p.pub === pub), 1); },
     unpairAll: async () => { unpairedAll = true; return true; }
   });
   const listed = await postJson('http://127.0.0.1:49235/api/hub/relay-phones', {});
   assert(listed.phones?.length === 2 && listed.phones[0].name === 'Android phone', 'relay-phones lists the host\'s paired phones');
+  assert(listed.waiting?.length === 1 && listed.waiting[0].code === '0427', 'relay-phones also lists phones waiting to be allowed');
+  const allowed = await postJson('http://127.0.0.1:49235/api/hub/relay-answer', { id: 'w1', allow: true });
+  assert(allowed.ok === true && answers[0]?.[0] === 'w1' && answers[0][1] === true, 'relay-answer allows a waiting phone from any window');
+  const stale = await postJson('http://127.0.0.1:49235/api/hub/relay-answer', { id: 'gone', allow: false });
+  assert(stale.ok === false, 'relay-answer reports a request that is no longer waiting');
+  const badAnswer = await postJson('http://127.0.0.1:49235/api/hub/relay-answer', { id: 'w1', allow: 'yes' });
+  assert(!!badAnswer.error && answers.length === 2, 'relay-answer needs a true/false answer');
+  const answerFromBrowser = await postJson('http://127.0.0.1:49235/api/hub/relay-answer', { id: 'w1', allow: true }, undefined, { Origin: 'https://evil.example' });
+  assert(!answerFromBrowser.ok && answers.length === 2, 'a web page cannot allow a phone through loopback');
   const unpaired = await postJson('http://127.0.0.1:49235/api/hub/relay-unpair', { pub: 'pk1' });
   assert(unpaired.ok === true && phones.length === 1 && phones[0].pub === 'pk2', 'relay-unpair removes only that phone');
   const all = await postJson('http://127.0.0.1:49235/api/hub/unpair-all', {});

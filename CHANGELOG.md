@@ -2,6 +2,7 @@
 
 ## Unreleased: Safer defaults and relay limits
 
+- **Every window shows its own conversation.** With two or more Antigravity windows open, one window's phone tab could stay empty. Some Antigravity builds start each window's agent without saying which folder it belongs to, so every window connected to the first agent found, which only knows its own window's chats. Each window now finds its agent by asking which one holds its conversations. A window without a chat yet picks up its first one within about 10 seconds.
 - **Relay-only by default.** New installs, and anyone who never changed `agRemote.transport`, now connect only through the end-to-end encrypted relay, and the extension's local server accepts this PC only. Before, it also opened a plain-HTTP server on port 49222 to everyone on the same Wi-Fi, which is risky on café or office networks. To keep pairing with the Wi-Fi PIN, set `agRemote.transport` to `"both"`. Phones paired through the relay are not affected.
 - **Pairing codes can't be guessed at speed.** The relay now allows 10 pairing-code lookups a minute per IP. The phone shows "Too many tries, wait a minute" if you hit it.
 - **One address can't flood the relay.** Each IP can open up to 60 relay connections a minute, far above what a phone or PC needs, even several behind one mobile-carrier address.

@@ -44,7 +44,13 @@ export async function collectDiagnostics(opts: DiagnosticsOptions): Promise<stri
   const bridge = new LsBridge({ discover: async () => servers, discoveryCooldownMs: 0, workspace: opts.workspacePath });
   const convs = await bridge.listConversations().catch(() => null);
   const ep = bridge.describeEndpoint();
-  lines.push(`## Connected to: ${ep ? `pid ${ep.pid} (${ep.kind || 'language_server'}), port ${ep.port} (${ep.scheme})` : 'none (no workspace-less server answered)'}`);
+  const why: Record<string, string> = {
+    folder: "its folder is this window's",
+    conversations: "it holds this window's conversations",
+    only: 'the only server',
+    unconfirmed: 'no server holds a conversation for this window yet; rechecking'
+  };
+  lines.push(`## Connected to: ${ep ? `pid ${ep.pid} (${ep.kind || 'language_server'}), port ${ep.port} (${ep.scheme})${ep.matchedBy ? `; chosen because ${why[ep.matchedBy]}` : ''}` : 'none (no workspace-less server answered)'}`);
   if (convs) {
     const mine = convs.filter(c => c.workspaces.includes(ws));
     lines.push(`- Conversations the IDE lists: ${convs.length}`);

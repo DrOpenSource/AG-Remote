@@ -284,11 +284,28 @@ export const discoverLanguageServers: Discover =
 
 interface Endpoint { server: LsServer; port: number; scheme: 'http' | 'https' }
 
+/**
+ * Why this bridge chose its server (shown in diagnostics):
+ *  folder        an agy started with --add-dir for this window's folder
+ *  conversations an agy whose conversation list includes this window's folder (agy started without --add-dir)
+ *  only          the only reachable server, or an older shared language_server
+ *  unconfirmed   several agy and none claims this window yet (no chat in it): rechecked every discovery cooldown
+ */
+export type EndpointMatch = 'folder' | 'conversations' | 'only' | 'unconfirmed';
+
+/** Longest an unconfirmed window's rechecks reuse the last process list before discovering again. */
+const REDISCOVER_MS = 60_000;
+
 export class LsBridge {
   private discover: Discover;
   private timeoutMs: number;
   private endpoint: Endpoint | null = null;
+  private matchedBy: EndpointMatch | null = null;
   private lastDiscovery = 0;
+  /** Servers from the last full discovery. Rechecks of an unconfirmed choice reuse them for a minute,
+   * because discovery on Windows starts PowerShell and netstat. */
+  private knownServers: LsServer[] = [];
+  private knownServersAt = 0;
   private discoveryCooldownMs: number;
   private verifyTimeoutMs: number;
   /** The IDE window's folder: picks that window's agy server when each window has its own. */
@@ -307,9 +324,9 @@ export class LsBridge {
   }
 
   /** The server this bridge talks to, without its token (for diagnostics). */
-  public describeEndpoint(): { pid: number; port: number; scheme: string; kind?: string } | null {
+  public describeEndpoint(): { pid: number; port: number; scheme: string; kind?: string; matchedBy?: EndpointMatch } | null {
     const ep = this.endpoint;
-    return ep ? { pid: ep.server.pid, port: ep.port, scheme: ep.scheme, kind: ep.server.kind } : null;
+    return ep ? { pid: ep.server.pid, port: ep.port, scheme: ep.scheme, kind: ep.server.kind, matchedBy: this.matchedBy || undefined } : null;
   }
 
   public async getTrajectory(cascadeId: string): Promise<any | null> {
@@ -423,35 +440,92 @@ export class LsBridge {
         return null;
       }
       this.endpoint = null; // connection-level failure: rediscover once
+      this.matchedBy = null;
     }
     if (mustSucceed) throw new LsBridgeError('Antigravity language server is not reachable');
     return null;
   }
 
   private async resolveEndpoint(force: boolean): Promise<Endpoint | null> {
-    if (this.endpoint && !force) return this.endpoint;
     const now = Date.now();
-    if (!force && now - this.lastDiscovery < this.discoveryCooldownMs && this.lastDiscovery > 0) return null;
+    const cooled = now - this.lastDiscovery >= this.discoveryCooldownMs || this.lastDiscovery === 0;
+    if (this.endpoint && !force) {
+      // Keep a confirmed choice. An unconfirmed one (this window had no chat yet) is rechecked, so the
+      // window's first chat is found in whichever agy holds it.
+      if (this.matchedBy !== 'unconfirmed' || !cooled) return this.endpoint;
+    } else if (!force && !cooled) {
+      return null;
+    }
     this.lastDiscovery = now;
 
+    const recheck = !!this.endpoint && !force;
     let servers: LsServer[] = [];
-    try { servers = await this.discover(); } catch (_) { servers = []; }
-    // Only workspace-less servers hold live agent state; language_server's per-workspace copies are stale,
-    // so never fall back to them. With one agy per window, this window's comes first.
-    for (const server of rankLanguageServers(servers.filter(s => !s.workspaceId), this.workspace)) {
-      for (const port of server.ports) {
-        for (const scheme of ['https', 'http'] as const) {
-          const ep = { server, port, scheme };
-          const r = await this.post(ep, 'GetCascadeTrajectory', { cascadeId: '' });
-          if (r && r.status !== 0 && !/HTTP request to an HTTPS/.test(r.raw)) {
-            this.endpoint = ep;
-            return ep;
-          }
-        }
+    if (recheck && now - this.knownServersAt < REDISCOVER_MS) {
+      servers = this.knownServers;
+    } else {
+      try { servers = await this.discover(); } catch (_) { servers = []; }
+      this.knownServers = servers;
+      this.knownServersAt = now;
+    }
+    const chosen = await this.chooseEndpoint(servers);
+    if (chosen) {
+      this.endpoint = chosen.ep;
+      this.matchedBy = chosen.matchedBy;
+    } else if (force || !this.endpoint) {
+      // Nothing answered. A recheck that finds nothing keeps the current endpoint; a failing call forces a new search.
+      this.endpoint = null;
+      this.matchedBy = null;
+    }
+    return this.endpoint;
+  }
+
+  /**
+   * Picks this window's server. Only workspace-less servers hold live agent state; language_server's
+   * per-workspace copies are stale, so never fall back to them. Ranked: agy for this folder first,
+   * then attached, then not orphaned. An agy started without --add-dir can't be matched by folder, so
+   * each one is asked for its conversations: every agy lists only its own window's chats, and acting
+   * through another window's agy would show (and answer) the wrong project.
+   */
+  private async chooseEndpoint(servers: LsServer[]): Promise<{ ep: Endpoint; matchedBy: EndpointMatch } | null> {
+    const ws = this.workspace ? normalizeWorkspace(this.workspace) : '';
+    const ranked = rankLanguageServers(servers.filter(s => !s.workspaceId), this.workspace);
+    let fallback: Endpoint | null = null;
+    let reachable = 0;
+    for (const server of ranked) {
+      const ep = await this.reachableEndpoint(server);
+      if (!ep) continue;
+      reachable++;
+      // Older shared language_server, or no folder to match: the ranking (attached first) decides, as before.
+      if (!ws || server.kind !== 'agy') return { ep, matchedBy: 'only' };
+      if (server.addDirs?.includes(ws)) return { ep, matchedBy: 'folder' };
+      if (await this.listsWorkspace(ep, ws)) return { ep, matchedBy: 'conversations' };
+      if (!fallback) fallback = ep;
+    }
+    if (!fallback) return null;
+    return { ep: fallback, matchedBy: reachable === 1 ? 'only' : 'unconfirmed' };
+  }
+
+  /** The first port and scheme on which `server` answers, or null. */
+  private async reachableEndpoint(server: LsServer): Promise<Endpoint | null> {
+    for (const port of server.ports) {
+      for (const scheme of ['https', 'http'] as const) {
+        const ep = { server, port, scheme };
+        const r = await this.post(ep, 'GetCascadeTrajectory', { cascadeId: '' });
+        if (r && r.status !== 0 && !/HTTP request to an HTTPS/.test(r.raw)) return ep;
       }
     }
-    this.endpoint = null;
     return null;
+  }
+
+  /** Whether this server's conversation list has a conversation in folder `ws` (normalized). */
+  private async listsWorkspace(ep: Endpoint, ws: string): Promise<boolean> {
+    const r = await this.post(ep, 'GetAllCascadeTrajectories', {});
+    if (!r || r.status !== 200) return false;
+    try {
+      return parseConversations(r.raw ? JSON.parse(r.raw) : {}).some(c => c.workspaces.includes(ws));
+    } catch (_) {
+      return false;
+    }
   }
 
   private post(ep: Endpoint, method: string, body: object): Promise<{ status: number; raw: string } | null> {

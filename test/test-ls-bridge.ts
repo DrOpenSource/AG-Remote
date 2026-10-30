@@ -95,6 +95,30 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/** A minimal agy: answers the reachability probe and lists one conversation per folder in `folders`. */
+async function miniAgy(folders: string[]) {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      if (req.headers['x-codeium-csrf-token'] !== TOKEN) { res.writeHead(401); res.end('{}'); return; }
+      const method = (req.url || '').split('/').pop() || '';
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (method === 'GetAllCascadeTrajectories') {
+        const summaries: Record<string, any> = {};
+        folders.forEach((f, i) => {
+          summaries[`conv-${i}-${f.length}`] = { summary: 'chat', workspaces: [{ workspaceFolderAbsoluteUri: 'file:///' + f.replace(/^([a-z]):/, '$1%3A').replace(/ /g, '%20') }], lastModifiedTime: new Date().toISOString() };
+        });
+        res.end(JSON.stringify({ trajectorySummaries: summaries }));
+      } else {
+        res.end('{}');
+      }
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+  return { server, folders, port: (server.address() as any).port as number };
+}
+
 async function run() {
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
   const port = (server.address() as any).port;
@@ -257,6 +281,53 @@ async function run() {
   const bridgeA = new LsBridge({ discover: async () => agyServers, discoveryCooldownMs: 0, workspace: 'C:\\Users\\me\\Projects\\A' });
   await bridgeA.findPending(CASCADE);
   assert(bridgeA.describeEndpoint()?.pid === 41 && bridgeA.describeEndpoint()?.kind === 'agy', "window A's bridge talks to window A's agy");
+
+  console.log('\n[Suite 2c] agy without --add-dir: each window finds its agent by its conversations');
+  // Seen on a Windows PC (Oct 2026, 0.2.4 diagnostics): two windows, two agy, neither started with
+  // --add-dir. Each agy lists only its own window's chats. Both bridges used the first agy, so one
+  // window's phone tab stayed empty.
+  const eduhub = 'e:/d drive/coding/html css projects/eduhub';
+  const career = 'e:/d drive/coding/html css projects/careerforge ai';
+  const agyX = await miniAgy([eduhub]);
+  const agyY = await miniAgy([career]);
+  const noDirServers = (): LsServer[] => [
+    { pid: 19448, workspaceId: null, token: TOKEN, ports: [agyX.port], kind: 'agy', appDataDir: 'antigravity', attached: false, ppid: 18056 },
+    { pid: 17392, workspaceId: null, token: TOKEN, ports: [agyY.port], kind: 'agy', appDataDir: 'antigravity', attached: false, ppid: 14684 }
+  ];
+  const careerBridge = new LsBridge({ discover: async () => noDirServers(), discoveryCooldownMs: 0, workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\CareerForge AI' });
+  const careerConvs = await careerBridge.listConversations();
+  assert(careerBridge.describeEndpoint()?.pid === 17392, "CareerForge window talks to CareerForge's agy, not the first one found");
+  assert(!!careerConvs && careerConvs.some(c => c.workspaces.includes(career)), "CareerForge window sees CareerForge's conversations");
+  assert(careerBridge.describeEndpoint()?.matchedBy === 'conversations', 'diagnostics can tell it was matched by its conversations');
+  const eduBridge = new LsBridge({ discover: async () => noDirServers(), discoveryCooldownMs: 0, workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\EduHub' });
+  await eduBridge.listConversations();
+  assert(eduBridge.describeEndpoint()?.pid === 19448, 'EduHub window still talks to its own agy');
+
+  // A window with no chat yet can't be matched; once its first chat exists, the bridge must move to that agy.
+  const fresh = 'e:/projects/fresh';
+  const freshBridge = new LsBridge({ discover: async () => noDirServers(), discoveryCooldownMs: 0, workspace: 'E:\\Projects\\Fresh' });
+  const before = await freshBridge.listConversations();
+  assert(!!before && !before.some(c => c.workspaces.includes(fresh)), 'window without a chat: no conversation of another project is claimed as its own');
+  assert(freshBridge.describeEndpoint()?.matchedBy === 'unconfirmed', 'that connection is marked unconfirmed');
+  agyY.folders.push(fresh);
+  const after = await freshBridge.listConversations();
+  assert(freshBridge.describeEndpoint()?.pid === 17392 && !!after?.some(c => c.workspaces.includes(fresh)), "after the window's first chat, the bridge moves to the agy that holds it");
+
+  // Older builds: one shared language_server plus a leftover one (0.2.2 Mac fix). Keep choosing the
+  // attached server even if the leftover lists conversations for this folder (its state is stale).
+  const lsLive = await miniAgy([]);
+  const lsLeftover = await miniAgy([career]);
+  const macBridge = new LsBridge({
+    discover: async () => [
+      { pid: 2084, workspaceId: null, token: TOKEN, ports: [lsLeftover.port], kind: 'language_server', attached: false, ppid: 1 },
+      { pid: 4043, workspaceId: null, token: TOKEN, ports: [lsLive.port], kind: 'language_server', attached: true, ppid: 350 }
+    ],
+    discoveryCooldownMs: 0,
+    workspace: 'E:\\D Drive\\Coding\\HTML CSS Projects\\CareerForge AI'
+  });
+  await macBridge.listConversations();
+  assert(macBridge.describeEndpoint()?.pid === 4043, 'language_server: the attached server still wins over a leftover (unchanged)');
+  for (const s of [agyX, agyY, lsLive, lsLeftover]) s.server.close();
 
   console.log('\n[Suite 3] Adapter wired to the bridge');
   const brain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-brain-'));

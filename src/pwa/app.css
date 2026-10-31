@@ -242,8 +242,8 @@ button { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: calc(8px + var(--safe-top)) 4px 8px 8px;
+  gap: 6px;
+  padding: calc(8px + var(--safe-top)) 6px 8px 8px;
   min-height: 64px;
   background: var(--md-surface);
   flex-shrink: 0;
@@ -252,47 +252,39 @@ button { font: inherit; color: inherit; }
 .header-left {
   display: flex;
   align-items: center;
+  gap: 4px;
   min-width: 0;
   flex: 1;
 }
 
-.header-titles { min-width: 0; }
+.header-titles {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
 
-/* The brand mark lives in the agent avatar and the dialogs; the bar stays quiet */
 .brand-logo { display: none; }
 
-/* The active project/conversation is the header title; tap to switch */
-.session-label-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  min-height: 48px;
-  padding: 0 8px 0 12px;
-  border: none;
-  border-radius: var(--shape-full);
-  background: none;
-  color: var(--md-on-surface);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color var(--dur-short) var(--ease);
-}
-.session-label-btn svg { color: var(--md-on-surface-variant); flex-shrink: 0; }
-
 .session-label {
-  font-size: 18px;
+  font-size: 17px;
   line-height: 24px;
-  font-weight: 500;
-  letter-spacing: 0;
+  font-weight: 600;
+  letter-spacing: -0.2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 46vw;
+  color: var(--md-on-surface);
+  cursor: pointer;
+  margin: 0;
+  user-select: none;
+  transition: opacity var(--dur-short) var(--ease);
 }
+.session-label:active { opacity: 0.7; }
 
 .header-right {
   display: flex;
   align-items: center;
+  gap: 2px;
   flex-shrink: 0;
 }
 
@@ -1351,7 +1343,7 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  margin-right: 4px;
+  margin-right: 2px;
   border: 1px solid var(--md-warning-container);
   border-radius: var(--shape-full);
   background: var(--md-warning-container);
@@ -1359,13 +1351,36 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  animation: pulse 2s infinite ease-in-out;
+  user-select: none;
+  flex-shrink: 0;
+  transition: opacity var(--dur-short) var(--ease);
 }
+.autopilot-chip:active { opacity: 0.8; }
 .autopilot-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+  animation: auto-pilot-glow 1.5s ease-in-out infinite alternate;
+}
+@keyframes auto-pilot-glow {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1.15); }
+}
+
+@media (max-width: 380px) {
+  .autopilot-chip {
+    padding: 0 8px;
+    gap: 4px;
+  }
+  .autopilot-label {
+    display: none;
+  }
+  .autopilot-chip::after {
+    content: 'Auto';
+    font-size: 11px;
+    font-weight: 600;
+  }
 }
 
 /* Navigation Drawer */

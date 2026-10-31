@@ -6,6 +6,16 @@
   const statusBadge = document.getElementById('statusBadge');
   const statusText = document.getElementById('statusText');
   const sessionLabel = document.getElementById('sessionLabel');
+  const btnOpenDrawer = document.getElementById('btnOpenDrawer');
+  const btnCloseDrawer = document.getElementById('btnCloseDrawer');
+  const drawerBackdrop = document.getElementById('drawerBackdrop');
+  const drawerWindowsList = document.getElementById('drawerWindowsList');
+  const drawerHistoryList = document.getElementById('drawerHistoryList');
+  const btnAutoPilotBadge = document.getElementById('btnAutoPilotBadge');
+  const toggleAutoPilot = document.getElementById('toggleAutoPilot');
+  const themeBtnSystem = document.getElementById('themeBtnSystem');
+  const themeBtnLight = document.getElementById('themeBtnLight');
+  const themeBtnDark = document.getElementById('themeBtnDark');
   const chatFeed = document.getElementById('chatFeed');
   const emptyState = document.getElementById('emptyState');
   const approvalCard = document.getElementById('approvalCard');
@@ -707,6 +717,255 @@
     }
   }
 
+  // Clipboard helper
+  async function copyToClipboard(text, btn, feedbackText = 'Copied') {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      if (btn) {
+        const origHtml = btn.innerHTML;
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="m382-354 339-339q12-12 28-12t28 12q12 12 12 28.5T777-636L410-268q-12 12-28 12t-28-12L182-440q-12-12-11.5-28.5T183-497q12-12 28.5-12t28.5 12l142 143Z"/></svg><span>' + escapeHtml(feedbackText) + '</span>';
+        setTimeout(() => {
+          btn.innerHTML = origHtml;
+          btn.classList.remove('copied');
+        }, 2000);
+      }
+    } catch (_) {
+      showToast('Could not copy to clipboard');
+    }
+  }
+
+  // Safe inline tokenizer (DOM construction only, 0 innerHTML, immune to XSS)
+  function renderInline(parentEl, text) {
+    if (!text) return;
+    const INLINE_RE = /(`[^`\n]+`)|(\[([^\]\n]+)\]\(([^)\s]+)\))|(\*\*([^\*\n]+)\*\*|__([^\n_]+)__)|(~~([^~\n]+)~~)|(\*([^\*\n]+)\*|_([^\n_]+)_)|(\n)/g;
+    let last = 0;
+    for (const m of text.matchAll(INLINE_RE)) {
+      if (m.index > last) {
+        parentEl.append(text.slice(last, m.index));
+      }
+      if (m[1]) {
+        const code = document.createElement('code');
+        code.textContent = m[1].slice(1, -1);
+        parentEl.appendChild(code);
+      } else if (m[2]) {
+        parentEl.appendChild(linkNode(m[3], m[4]));
+      } else if (m[5]) {
+        const strong = document.createElement('strong');
+        strong.textContent = m[6] || m[7];
+        parentEl.appendChild(strong);
+      } else if (m[8]) {
+        const del = document.createElement('del');
+        del.textContent = m[9];
+        parentEl.appendChild(del);
+      } else if (m[10]) {
+        const em = document.createElement('em');
+        em.textContent = m[11] || m[12];
+        parentEl.appendChild(em);
+      } else if (m[13]) {
+        parentEl.appendChild(document.createElement('br'));
+      }
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) {
+      parentEl.append(text.slice(last));
+    }
+  }
+
+  // Safe GitHub Flavored Markdown block renderer (DOM construction only)
+  function renderMarkdown(el, raw) {
+    if (!raw) return;
+    const lines = raw.split(/\r?\n/);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // 1. Fenced Code Block
+      const codeMatch = line.match(/^```(\w*)/);
+      if (codeMatch) {
+        const lang = codeMatch[1].trim();
+        i++;
+        const codeLines = [];
+        while (i < lines.length && !lines[i].startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length && lines[i].startsWith('```')) i++;
+        const codeText = codeLines.join('\n');
+
+        const block = document.createElement('div');
+        block.className = 'code-block';
+        const header = document.createElement('div');
+        header.className = 'code-header';
+        const langSpan = document.createElement('span');
+        langSpan.className = 'code-lang';
+        langSpan.textContent = lang || 'code';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy-code';
+        copyBtn.type = 'button';
+        copyBtn.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg><span>Copy</span>';
+        copyBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          copyToClipboard(codeText, copyBtn, 'Copied');
+        });
+        header.append(langSpan, copyBtn);
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = codeText;
+        pre.appendChild(code);
+        block.append(header, pre);
+        el.appendChild(block);
+        continue;
+      }
+
+      // 2. Table Block
+      if (line.trim().startsWith('|') && i + 1 < lines.length && /^\|\s*[-:]+/.test(lines[i + 1].trim())) {
+        const tableLines = [];
+        while (i < lines.length && lines[i].trim().startsWith('|')) {
+          tableLines.push(lines[i].trim());
+          i++;
+        }
+        if (tableLines.length >= 2) {
+          const tableContainer = document.createElement('div');
+          tableContainer.className = 'table-container';
+          const tableHeader = document.createElement('div');
+          tableHeader.className = 'table-header';
+          const tableTitle = document.createElement('span');
+          tableTitle.className = 'table-title';
+          tableTitle.textContent = 'Table';
+          const copyTableBtn = document.createElement('button');
+          copyTableBtn.className = 'btn-copy-code';
+          copyTableBtn.type = 'button';
+          copyTableBtn.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg><span>Copy</span>';
+          const rawTableText = tableLines.join('\n');
+          copyTableBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            copyToClipboard(rawTableText, copyTableBtn, 'Copied');
+          });
+          tableHeader.append(tableTitle, copyTableBtn);
+          tableContainer.appendChild(tableHeader);
+
+          const table = document.createElement('table');
+          const thead = document.createElement('thead');
+          const tbody = document.createElement('tbody');
+
+          const headCells = tableLines[0].split('|').slice(1, -1);
+          const trHead = document.createElement('tr');
+          for (const c of headCells) {
+            const th = document.createElement('th');
+            renderInline(th, c.trim());
+            trHead.appendChild(th);
+          }
+          thead.appendChild(trHead);
+          table.appendChild(thead);
+
+          for (let r = 2; r < tableLines.length; r++) {
+            const rowCells = tableLines[r].split('|').slice(1, -1);
+            const tr = document.createElement('tr');
+            for (const c of rowCells) {
+              const td = document.createElement('td');
+              renderInline(td, c.trim());
+              tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+          }
+          table.appendChild(tbody);
+          tableContainer.appendChild(table);
+          el.appendChild(tableContainer);
+          continue;
+        }
+      }
+
+      // 3. Headings
+      const hMatch = line.match(/^(#{1,4})\s+(.+)$/);
+      if (hMatch) {
+        const level = Math.min(hMatch[1].length + 2, 5);
+        const h = document.createElement('h' + level);
+        h.className = 'md-h md-h' + level;
+        renderInline(h, hMatch[2]);
+        el.appendChild(h);
+        i++;
+        continue;
+      }
+
+      // 4. Blockquote
+      if (line.startsWith('>')) {
+        const quoteLines = [];
+        while (i < lines.length && lines[i].startsWith('>')) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ''));
+          i++;
+        }
+        const bq = document.createElement('blockquote');
+        bq.className = 'md-quote';
+        renderInline(bq, quoteLines.join('\n'));
+        el.appendChild(bq);
+        continue;
+      }
+
+      // 5. Unordered List
+      if (/^[\*\-]\s+/.test(line)) {
+        const ul = document.createElement('ul');
+        ul.className = 'md-list';
+        while (i < lines.length && /^[\*\-]\s+/.test(lines[i])) {
+          const li = document.createElement('li');
+          renderInline(li, lines[i].replace(/^[\*\-]\s+/, ''));
+          ul.appendChild(li);
+          i++;
+        }
+        el.appendChild(ul);
+        continue;
+      }
+
+      // 6. Ordered List
+      if (/^\d+\.\s+/.test(line)) {
+        const ol = document.createElement('ol');
+        ol.className = 'md-list md-list-ordered';
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          const li = document.createElement('li');
+          renderInline(li, lines[i].replace(/^\d+\.\s+/, ''));
+          ol.appendChild(li);
+          i++;
+        }
+        el.appendChild(ol);
+        continue;
+      }
+
+      // 7. Empty line
+      if (line.trim().length === 0) {
+        i++;
+        continue;
+      }
+
+      // 8. Regular paragraph
+      const pLines = [];
+      while (i < lines.length && lines[i].trim().length > 0 &&
+             !lines[i].startsWith('```') &&
+             !lines[i].trim().startsWith('|') &&
+             !lines[i].match(/^(#{1,4})\s+/) &&
+             !lines[i].startsWith('>') &&
+             !/^[\*\-]\s+/.test(lines[i]) &&
+             !/^\d+\.\s+/.test(lines[i])) {
+        pLines.push(lines[i]);
+        i++;
+      }
+      const p = document.createElement('p');
+      p.className = 'md-p';
+      renderInline(p, pLines.join('\n'));
+      el.appendChild(p);
+    }
+  }
+
   function appendChatMessage(msg, shouldScroll = true) {
     if (!msg || (!msg.text && !msg.images?.length)) return;
     emptyState.classList.add('hidden');
@@ -721,7 +980,7 @@
 
     const text = document.createElement('div');
     text.className = 'chat-text';
-    renderMessageText(text, msg.text);
+    renderMarkdown(text, msg.text);
 
     bubble.appendChild(author);
     if (msg.images?.length) {
@@ -736,6 +995,22 @@
       bubble.appendChild(thumbs);
     }
     if (msg.text) bubble.appendChild(text);
+
+    if (msg.role !== 'user' && msg.text) {
+      const actions = document.createElement('div');
+      actions.className = 'chat-actions';
+      const copyMsgBtn = document.createElement('button');
+      copyMsgBtn.className = 'btn-msg-action';
+      copyMsgBtn.type = 'button';
+      copyMsgBtn.title = 'Copy response';
+      copyMsgBtn.setAttribute('aria-label', 'Copy response');
+      copyMsgBtn.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg><span>Copy</span>';
+      copyMsgBtn.addEventListener('click', () => {
+        copyToClipboard(msg.text, copyMsgBtn, 'Copied');
+      });
+      actions.appendChild(copyMsgBtn);
+      bubble.appendChild(actions);
+    }
     chatFeed.appendChild(bubble);
 
     if (shouldScroll) scrollToBottom();
@@ -1091,6 +1366,8 @@
     addLocalMessage(text.trim(), tabId, sending.map(a => a.src));
     promptInput.value = '';
     promptInput.style.height = 'auto';
+    promptInput.blur();
+    window.scrollTo(0, 0);
     attachments = [];
     renderAttachTray();
     updateSendEnabled();
@@ -1635,3 +1912,144 @@
   // Initialize
   initAuth();
 })();
+
+  // Navigation Drawer & Auto-Pilot & Theme Manager
+  let autoPilotEnabled = localStorage.getItem('ag_remote_autopilot') === 'true';
+
+  function setAutoPilot(enabled) {
+    autoPilotEnabled = !!enabled;
+    localStorage.setItem('ag_remote_autopilot', autoPilotEnabled ? 'true' : 'false');
+    if (toggleAutoPilot) toggleAutoPilot.checked = autoPilotEnabled;
+    if (btnAutoPilotBadge) btnAutoPilotBadge.classList.toggle('hidden', !autoPilotEnabled);
+  }
+
+  if (toggleAutoPilot) {
+    toggleAutoPilot.checked = autoPilotEnabled;
+    toggleAutoPilot.addEventListener('change', () => setAutoPilot(toggleAutoPilot.checked));
+  }
+  if (btnAutoPilotBadge) {
+    btnAutoPilotBadge.classList.toggle('hidden', !autoPilotEnabled);
+    btnAutoPilotBadge.addEventListener('click', () => setAutoPilot(!autoPilotEnabled));
+  }
+
+  function openDrawer() {
+    if (!drawerBackdrop) return;
+    drawerBackdrop.classList.remove('hidden');
+    renderDrawer();
+  }
+
+  function closeDrawer() {
+    if (drawerBackdrop) drawerBackdrop.classList.add('hidden');
+  }
+
+  if (btnOpenDrawer) btnOpenDrawer.addEventListener('click', openDrawer);
+  if (btnCloseDrawer) btnCloseDrawer.addEventListener('click', closeDrawer);
+  if (drawerBackdrop) {
+    drawerBackdrop.addEventListener('click', (e) => {
+      if (e.target === drawerBackdrop) closeDrawer();
+    });
+  }
+
+  async function renderDrawer() {
+    if (!drawerWindowsList || !drawerHistoryList) return;
+    drawerWindowsList.innerHTML = '<div class="drawer-item">Loading windows...</div>';
+    drawerHistoryList.innerHTML = '<div class="drawer-item">Loading conversations...</div>';
+
+    try {
+      let windows = [];
+      let selectedWinId = null;
+      try {
+        const winRes = await api('GET', '/api/windows');
+        if (winRes.ok) {
+          windows = winRes.data.windows || [];
+          selectedWinId = winRes.data.selectedId;
+        }
+      } catch (_) {}
+
+      const tabId = activeTabId;
+      const res = await api('GET', '/api/sessions' + windowQuery(tabId));
+      const data = res.ok ? res.data : { sessions: [] };
+
+      // Render Windows
+      drawerWindowsList.innerHTML = '';
+      if (windows.length > 0) {
+        windows.forEach(w => {
+          const isSelected = tabs.has(activeTabId) ? w.windowId === activeTabId : w.windowId === selectedWinId;
+          const wItem = document.createElement('button');
+          wItem.type = 'button';
+          wItem.className = 'drawer-item ' + (isSelected ? 'active' : '');
+          wItem.innerHTML = '<span class="drawer-item-title">' + escapeHtml(w.workspaceName) + '</span><span class="drawer-item-badge">' + (isSelected ? 'Showing' : (w.isFocused ? 'Focused' : '')) + '</span>';
+          wItem.addEventListener('click', async () => {
+            closeDrawer();
+            if (!tabs.has(w.windowId)) await resyncState();
+            switchTab(w.windowId);
+          });
+          drawerWindowsList.appendChild(wItem);
+        });
+      } else {
+        drawerWindowsList.innerHTML = '<div class="drawer-item">No active IDE windows</div>';
+      }
+
+      // Render History / Conversations
+      drawerHistoryList.innerHTML = '';
+      if (data.sessions && data.sessions.length > 0) {
+        data.sessions.forEach(s => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'drawer-item ' + (s.isCurrent ? 'active' : '');
+          const ago = formatTimeAgo(s.mtime);
+          item.innerHTML = '<span class="drawer-item-title">' + escapeHtml(s.title || 'Untitled conversation') + '</span><span class="drawer-item-badge">' + ago + '</span>';
+          item.addEventListener('click', async () => {
+            try {
+              closeDrawer();
+              const switchRes = await api('POST', '/api/sessions/select', withWindow({ id: s.id }, tabId));
+              if (switchRes.ok) {
+                await fetchTabState(tabId).catch(() => {});
+                if (tabId === activeTabId) renderActiveTab();
+              } else {
+                showToast('Could not switch to selected session');
+              }
+            } catch (_) {
+              showToast('Network error switching session');
+            }
+          });
+          drawerHistoryList.appendChild(item);
+        });
+      } else {
+        drawerHistoryList.innerHTML = '<div class="drawer-item">No conversations yet</div>';
+      }
+    } catch (_) {
+      drawerWindowsList.innerHTML = '<div class="drawer-item">Could not load windows</div>';
+      drawerHistoryList.innerHTML = '<div class="drawer-item">Could not load conversations</div>';
+    }
+  }
+
+  // Theme Management
+  function initTheme() {
+    const saved = localStorage.getItem('ag_remote_theme') || 'system';
+    applyTheme(saved);
+  }
+
+  function applyTheme(theme) {
+    if (theme === 'dark' || theme === 'light') {
+      document.documentElement.setAttribute('data-theme', theme);
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    localStorage.setItem('ag_remote_theme', theme);
+
+    if (themeBtnSystem) themeBtnSystem.classList.toggle('active', theme === 'system');
+    if (themeBtnLight) themeBtnLight.classList.toggle('active', theme === 'light');
+    if (themeBtnDark) themeBtnDark.classList.toggle('active', theme === 'dark');
+
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const color = isDark ? '#111416' : '#ffffff';
+    for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+      m.setAttribute('content', color);
+    }
+  }
+
+  if (themeBtnSystem) themeBtnSystem.addEventListener('click', () => applyTheme('system'));
+  if (themeBtnLight) themeBtnLight.addEventListener('click', () => applyTheme('light'));
+  if (themeBtnDark) themeBtnDark.addEventListener('click', () => applyTheme('dark'));
+  initTheme();

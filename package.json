@@ -53,7 +53,7 @@
     "test:e2e": "node --env-file=test/test.env --experimental-strip-types test/test-e2e.ts",
     "test:relay-host": "node --env-file=test/test.env --experimental-strip-types test/test-relay-host.ts",
     "test:relay-link": "node --env-file=test/test.env --experimental-strip-types test/test-relay-link.ts",
-    "build:pwa": "esbuild src/pwa/app.js src/pwa/e2e.js src/pwa/relay-link.js src/pwa/sw.js src/pwa/app.css --minify --legal-comments=none --outdir=dist/pwa && node -e \"const fs = require('fs'); for (const f of ['index.html', 'manifest.json']) fs.copyFileSync('src/pwa/' + f, 'dist/pwa/' + f); fs.cpSync('src/pwa/icons', 'dist/pwa/icons', { recursive: true }); fs.cpSync('src/pwa/fonts', 'dist/pwa/fonts', { recursive: true })\"",
+    "build:pwa": "esbuild src/pwa/app.js src/pwa/e2e.js src/pwa/relay-link.js src/pwa/sw.js src/pwa/app.css --minify --legal-comments=none --outdir=dist/pwa && node -e \"const fs = require('fs'); fs.writeFileSync('dist/pwa/index.html', fs.readFileSync('src/pwa/index.html', 'utf8').replace(/<!--[\\s\\S]*?-->/g, '').replace(/\\r?\\n\\s+/g, '\\n')); fs.copyFileSync('src/pwa/manifest.json', 'dist/pwa/manifest.json'); fs.cpSync('src/pwa/icons', 'dist/pwa/icons', { recursive: true }); fs.cpSync('src/pwa/fonts', 'dist/pwa/fonts', { recursive: true })\"",
     "test:browser": "playwright test"
   },
   "bugs": {

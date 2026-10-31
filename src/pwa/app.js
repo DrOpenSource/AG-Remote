@@ -129,6 +129,7 @@
 
   const pairHint = document.getElementById('pairHint');
   const pinLabel = document.getElementById('pinLabel');
+  const pairCheckCode = document.getElementById('pairCheckCode');
   const RELAY_PAIR_ERRORS = {
     'bad-secret': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
     'no-pairing': 'This QR code was already used or replaced by a newer one. Show a new QR code on your PC and scan it.',
@@ -195,6 +196,7 @@
       ? 'Enter the 6-character code from your PC, or paste the link from the QR code.'
       : 'Scan the QR code from AG-Remote on your PC, or enter the 6-character pairing code.';
     pinLabel.classList.add('hidden');
+    pairCheckCode.classList.add('hidden');
     tokenInput.classList.remove('hidden');
     btnSaveToken.classList.remove('hidden');
     tokenInput.removeAttribute('maxlength');
@@ -208,9 +210,12 @@
 
   /** The code was right; the PC now asks its owner. Same code on both screens means it's this phone. */
   function showApprovalWait(code) {
+    // The code gets its own large line so it is easy to compare with the PC's.
     pairHint.textContent = code
-      ? `On your PC, click Allow. Your PC should show the same code: ${code}`
+      ? 'On your PC, click Allow. Your PC should show the same code:'
       : 'On your PC, click Allow.';
+    pairCheckCode.textContent = code || '';
+    pairCheckCode.classList.toggle('hidden', !code);
     pinLabel.classList.add('hidden');
     tokenInput.classList.add('hidden');
     btnSaveToken.classList.add('hidden');
@@ -797,7 +802,14 @@
 
     const isQuestion = approval.kind === 'ask_question' || (Array.isArray(approval.options) && approval.options.length > 0);
 
+    // A new request starts clean: an earlier answer leaves the card busy, and a question
+    // has no deny note, folder or IDE-only line of its own.
+    setApprovalBusy(false);
+
     if (isQuestion) {
+      if (approvalDenyNote) approvalDenyNote.classList.add('hidden');
+      if (approvalCwd) approvalCwd.classList.add('hidden');
+      if (approvalIdeOnly) approvalIdeOnly.classList.add('hidden');
       if (approvalBadge) approvalBadge.textContent = 'The agent has a question';
       approvalDesc.textContent = approval.question || approval.description || 'Please select an option:';
       approvalDetail.classList.add('hidden');
@@ -906,10 +918,12 @@
         approvalDenyNote.classList.toggle('hidden', !actions.includes('deny'));
       }
       if (approvalIdeOnly) approvalIdeOnly.classList.toggle('hidden', actions.length > 0);
-      setApprovalBusy(false);
     }
 
+    // The card sits above the composer, so the feed gets shorter: keep the newest message in view.
+    const feedAtBottom = chatFeed.scrollHeight - chatFeed.scrollTop - chatFeed.clientHeight < 48;
     approvalCard.classList.remove('hidden');
+    if (feedAtBottom) scrollToBottom();
   }
 
   function hideApproval() {
@@ -1210,7 +1224,7 @@
     updateSendEnabled();
     // Auto-expand textarea
     promptInput.style.height = 'auto';
-    promptInput.style.height = `${Math.min(promptInput.scrollHeight, 120)}px`;
+    promptInput.style.height = `${Math.min(promptInput.scrollHeight, 144)}px`;
   });
 
   promptForm.addEventListener('submit', (e) => {

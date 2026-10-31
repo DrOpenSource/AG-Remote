@@ -76,6 +76,22 @@ test('denies with a note', async ({ page }) => {
   expect((await calls()).find(c => c.type === 'deny')?.reason).toBe('use npm run clean instead');
 });
 
+test('a question right after an answered request can be answered', async ({ page }) => {
+  await openApp(page);
+  await control('/approval', { detail: 'npm test', cwd: '/work/demo-project' });
+  await page.locator('#btnDeny').click();
+  await expect(page.locator('#approvalCard')).toBeHidden();
+  await control('/approval', { kind: 'ask_question', description: 'Which runner?', detail: '', options: ['Vitest', 'Jest'], actions: [] });
+  await expect(page.locator('#approvalCard')).not.toHaveClass(/busy/);
+  // Nothing left over from the command card
+  await expect(page.locator('#approvalDenyNote')).toBeHidden();
+  await expect(page.locator('#approvalCwd')).toBeHidden();
+  await page.locator('.option-item', { hasText: 'Jest' }).click({ timeout: 3000 });
+  await page.locator('.option-submit-bar .btn-approve').click();
+  await expect(page.locator('#approvalCard')).toBeHidden();
+  expect((await calls()).filter(c => c.type === 'approve')).toHaveLength(1);
+});
+
 test('sends a prompt and clears the box', async ({ page }) => {
   await openApp(page);
   await expect(page.locator('#btnSend')).toBeDisabled();

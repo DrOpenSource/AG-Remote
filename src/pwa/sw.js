@@ -1,5 +1,5 @@
 // AG-Remote Service Worker (Cache static shell for offline PWA installation)
-const CACHE_NAME = 'ag-remote-shell-v15';
+const CACHE_NAME = 'ag-remote-shell-v16';
 // What the last tapped notification said, for an app window that opens fresh (see app.js).
 const NOTICE_CACHE = 'ag-remote-notice';
 const ASSETS = [
@@ -12,7 +12,8 @@ const ASSETS = [
   '/relay-link.js',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
-  '/icons/badge-96.png'
+  '/icons/badge-96.png',
+  '/fonts/ag-remote-sans.woff2'
 ];
 
 self.addEventListener('install', (event) => {

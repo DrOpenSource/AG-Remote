@@ -47,6 +47,7 @@
 
   // State
   let token = localStorage.getItem('ag_remote_token') || '';
+  let autoPilotEnabled = localStorage.getItem('ag_remote_autopilot') === 'true';
   let ws = null;
   let currentApproval = null;
   let isReconnecting = false;
@@ -619,6 +620,13 @@
       t.approval = event.approval;
       t.status = 'awaiting_approval';
       t.lastActivity = Date.now();
+
+      const isQuestion = event.approval.kind === 'ask_question' || (Array.isArray(event.approval.options) && event.approval.options.length > 0);
+      if (autoPilotEnabled && !isQuestion) {
+        autoApprove(event.approval, id);
+        return;
+      }
+
       if (visible) {
         showApproval(event.approval);
         updateStatus('awaiting_approval');
@@ -1064,6 +1072,30 @@
       .replace(/"/g, '&quot;');
   }
 
+
+  async function autoApprove(approval, tabId = activeTabId) {
+    if (!approval || !linked()) return;
+    const approvalId = approval.id;
+    const actions = Array.isArray(approval.actions) ? approval.actions : ['allow_once'];
+    const option = actions.includes('allow_conversation') ? 'allow_conversation' : 'allow_once';
+    try {
+      const res = await api('POST', '/api/approve', withWindow({ id: approvalId, option }, tabId));
+      if (res.ok) {
+        const t = tabFor(tabId);
+        if (t.approval && t.approval.id === approvalId) t.approval = null;
+        if (currentApproval && currentApproval.id === approvalId) hideApproval();
+        renderTabBar();
+        const desc = approval.description || approval.kind || 'Action';
+        showToast(`⚡ Auto-Pilot approved: ${desc}`);
+        if (navigator.vibrate) navigator.vibrate(20);
+        return;
+      }
+      showToast(res.data?.error || 'Auto-Pilot approval failed');
+    } catch (_) {
+      showToast('Network error during auto-approval');
+    }
+  }
+
   function showApproval(approval) {
     currentApproval = approval;
     const kindLabels = {
@@ -1076,6 +1108,11 @@
     approvalKind.textContent = kindLabels[approval.kind] || approval.kind;
 
     const isQuestion = approval.kind === 'ask_question' || (Array.isArray(approval.options) && approval.options.length > 0);
+
+    if (autoPilotEnabled && !isQuestion) {
+      autoApprove(approval, activeTabId);
+      return;
+    }
 
     // A new request starts clean: an earlier answer leaves the card busy, and a question
     // has no deny note, folder or IDE-only line of its own.
@@ -1695,129 +1732,10 @@
     }
   });
 
-  // Switch Active Session & Windows
-  const btnSwitchSession = document.getElementById('btnSwitchSession');
-  if (btnSwitchSession) {
-    btnSwitchSession.addEventListener('click', openSessionsModal);
+  // Switch Active Session & Windows via Navigation Drawer
+  if (sessionLabel) {
+    sessionLabel.addEventListener('click', openDrawer);
   }
-
-  const btnCloseSessionsModal = document.getElementById('btnCloseSessionsModal');
-  if (btnCloseSessionsModal) {
-    btnCloseSessionsModal.addEventListener('click', () => {
-      const modal = document.getElementById('sessionsModal');
-      if (modal) modal.classList.add('hidden');
-    });
-  }
-
-  async function openSessionsModal() {
-    if (!linked()) return;
-    const modal = document.getElementById('sessionsModal');
-    const list = document.getElementById('sessionsList');
-    if (!modal || !list) return;
-
-    list.innerHTML = '<div class="list-empty">Loading windows and conversations...</div>';
-    modal.classList.remove('hidden');
-
-    try {
-      // 1. Fetch live active windows from hub
-      let windows = [];
-      let selectedWinId = null;
-      try {
-        const winRes = await api('GET', '/api/windows');
-        if (winRes.ok) {
-          windows = winRes.data.windows || [];
-          selectedWinId = winRes.data.selectedId;
-        }
-      } catch (_) {}
-
-      // 2. Fetch sessions
-      const tabId = activeTabId;
-      const res = await api('GET', `/api/sessions${windowQuery(tabId)}`);
-      const data = res.ok ? res.data : { sessions: [] };
-      list.innerHTML = '';
-
-      // If active windows are registered, render them at the top
-      if (windows.length > 0) {
-        const winHeader = document.createElement('div');
-        winHeader.className = 'list-subheader';
-        winHeader.textContent = `Open IDE windows (${windows.length})`;
-        list.appendChild(winHeader);
-
-        windows.forEach(w => {
-          const isSelected = tabs.has(activeTabId) ? w.windowId === activeTabId : w.windowId === selectedWinId;
-          const wItem = document.createElement('div');
-          wItem.className = `session-item ${isSelected ? 'current' : ''}`;
-          wItem.innerHTML = `
-            <div class="session-item-title">${escapeHtml(w.workspaceName)} ${w.isFocused ? '<span class="focused-tag">Focused</span>' : ''}</div>
-            <div class="session-item-sub">
-              <span>${escapeHtml(w.workspacePath)}</span>
-              <span>${isSelected ? 'Showing' : ''}</span>
-            </div>
-          `;
-          wItem.addEventListener('click', async () => {
-            modal.classList.add('hidden');
-            if (!tabs.has(w.windowId)) await resyncState();
-            switchTab(w.windowId);
-          });
-          list.appendChild(wItem);
-        });
-
-        const divider = document.createElement('div');
-        divider.className = 'list-divider';
-        list.appendChild(divider);
-      }
-
-      // Render workspace sessions
-      const sessHeader = document.createElement('div');
-      sessHeader.className = 'list-subheader';
-      sessHeader.textContent = tabId && tabs.has(tabId) ? `Conversations in ${tabFor(tabId).name}` : 'Conversations';
-      list.appendChild(sessHeader);
-
-      if (!data.sessions || data.sessions.length === 0) {
-        const emptyMsg = document.createElement('div');
-        emptyMsg.className = 'list-empty';
-        emptyMsg.textContent = 'No matching conversations found.';
-        list.appendChild(emptyMsg);
-        return;
-      }
-
-      data.sessions.forEach(s => {
-        const item = document.createElement('div');
-        item.className = `session-item ${s.isCurrent ? 'current' : ''}`;
-        const wsName = s.workspace ? s.workspace.split(/[\\/]/).pop() : 'Workspace';
-        const ago = formatTimeAgo(s.mtime);
-
-        item.innerHTML = `
-          <div class="session-item-title">${escapeHtml(s.title || 'Untitled conversation')}</div>
-          <div class="session-item-sub">
-            <span>${escapeHtml(wsName)}</span>
-            <span>${ago}</span>
-          </div>
-        `;
-
-        item.addEventListener('click', async () => {
-          try {
-            item.classList.add('busy');
-            const switchRes = await api('POST', '/api/sessions/select', withWindow({ id: s.id }, tabId));
-            if (switchRes.ok) {
-              modal.classList.add('hidden');
-              await fetchTabState(tabId).catch(() => {});
-              if (tabId === activeTabId) renderActiveTab();
-            } else {
-              showToast('Could not switch to selected session');
-            }
-          } catch (_) {
-            showToast('Network error switching session');
-          }
-        });
-
-        list.appendChild(item);
-      });
-    } catch (err) {
-      list.innerHTML = '<div class="list-empty error">Could not load conversations.</div>';
-    }
-  }
-
 
   function formatTimeAgo(mtime) {
     const diff = Math.floor((Date.now() - mtime) / 1000);
@@ -1908,19 +1826,24 @@
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     });
   }
-
-  // Initialize
-  initAuth();
-})();
-
   // Navigation Drawer & Auto-Pilot & Theme Manager
-  let autoPilotEnabled = localStorage.getItem('ag_remote_autopilot') === 'true';
-
   function setAutoPilot(enabled) {
     autoPilotEnabled = !!enabled;
     localStorage.setItem('ag_remote_autopilot', autoPilotEnabled ? 'true' : 'false');
     if (toggleAutoPilot) toggleAutoPilot.checked = autoPilotEnabled;
     if (btnAutoPilotBadge) btnAutoPilotBadge.classList.toggle('hidden', !autoPilotEnabled);
+
+    // If enabled while an approval is pending across any tab, auto-approve immediately
+    if (autoPilotEnabled) {
+      for (const [tabId, t] of tabs) {
+        if (t.approval) {
+          const isQuestion = t.approval.kind === 'ask_question' || (Array.isArray(t.approval.options) && t.approval.options.length > 0);
+          if (!isQuestion) {
+            autoApprove(t.approval, tabId);
+          }
+        }
+      }
+    }
   }
 
   if (toggleAutoPilot) {
@@ -1949,6 +1872,9 @@
       if (e.target === drawerBackdrop) closeDrawer();
     });
   }
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDrawer();
+  });
 
   async function renderDrawer() {
     if (!drawerWindowsList || !drawerHistoryList) return;
@@ -2053,3 +1979,7 @@
   if (themeBtnLight) themeBtnLight.addEventListener('click', () => applyTheme('light'));
   if (themeBtnDark) themeBtnDark.addEventListener('click', () => applyTheme('dark'));
   initTheme();
+
+  // Initialize
+  initAuth();
+})();

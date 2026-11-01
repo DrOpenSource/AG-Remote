@@ -12,7 +12,7 @@
  *            GET  /calls          what the phone did (prompts with image counts, approvals, stops)
  */
 import http from 'http';
-import type { IdeAdapter, AdapterEvent, SessionSnapshot, Approval, ChatMessage, PromptImage, SessionStatus } from '../../src/core/types.ts';
+import type { IdeAdapter, AdapterEvent, SessionSnapshot, Approval, ChatMessage, PromptImage, PromptFile, SessionStatus } from '../../src/core/types.ts';
 import { SessionManager } from '../../src/core/session-manager.ts';
 import { RemoteServer } from '../../src/server/index.ts';
 
@@ -43,8 +43,8 @@ class FakeAgent implements IdeAdapter {
     this.fire({ type: 'status_changed', status });
   }
 
-  async sendPrompt(text: string, images: PromptImage[] = []) {
-    this.calls.push({ type: 'prompt', text, images: images.map(i => ({ mimeType: i.mimeType, bytes: Math.floor(i.data.length * 3 / 4) })) });
+  async sendPrompt(text: string, images: PromptImage[] = [], files: PromptFile[] = []) {
+    this.calls.push({ type: 'prompt', text, images: images.map(i => ({ mimeType: i.mimeType, bytes: Math.floor(i.data.length * 3 / 4) })), files: files.map(f => ({ name: f.name, mimeType: f.mimeType, bytes: Math.floor(f.data.length * 3 / 4) })) });
   }
   async approve(id: string, _response?: string, option?: string) {
     this.calls.push({ type: 'approve', id, option });

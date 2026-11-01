@@ -322,6 +322,18 @@ button { font: inherit; color: inherit; }
 }
 .status-badge[data-status="awaiting_approval"] .status-dot { background: currentColor; }
 .status-badge[data-status="disconnected"] .status-dot { background: var(--md-error); }
+.status-badge[data-status="disconnected"] {
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.status-badge[data-status="disconnected"]:hover {
+  background: var(--md-surface-container-high);
+}
+.status-badge[data-status="disconnected"]:active {
+  background: var(--md-surface-container-highest);
+  transform: scale(0.96);
+}
 
 @keyframes pulse {
   50% { opacity: 0.3; }
@@ -931,7 +943,8 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   to { transform: none; opacity: 1; }
 }
 
-.btn-attach {
+.btn-attach,
+.btn-mic {
   width: 48px;
   height: 48px;
   border: none;
@@ -943,9 +956,22 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color var(--dur-short) var(--ease);
+  transition: background-color var(--dur-short) var(--ease), color var(--dur-short) var(--ease);
 }
-.btn-attach:disabled { opacity: 0.38; }
+.btn-attach:disabled,
+.btn-mic:disabled { opacity: 0.38; }
+
+.btn-mic.listening {
+  color: var(--md-error);
+  background: var(--md-error-container);
+  box-shadow: 0 0 0 2px var(--md-error);
+  animation: pulse-listening 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-listening {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-error) 40%, transparent); }
+  50% { opacity: 0.85; box-shadow: 0 0 0 6px color-mix(in srgb, var(--md-error) 0%, transparent); }
+}
 
 /* Picked images waiting to be sent */
 .attach-tray {
@@ -987,6 +1013,48 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   position: absolute;
   inset: -12px;
 }
+.attach-item.file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 36px 8px 12px;
+  background: var(--md-surface-container-high);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--shape-lg);
+  min-height: 48px;
+  max-width: 220px;
+}
+.attach-file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-primary);
+  flex-shrink: 0;
+}
+.attach-file-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.attach-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-file-size {
+  font-size: 11px;
+  color: var(--md-outline);
+}
+.attach-item.file-item .attach-remove {
+  top: 50%;
+  transform: translateY(-50%);
+  right: 6px;
+}
+
 
 /* Images inside a sent message */
 .chat-images {
@@ -1591,6 +1659,34 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   background: var(--md-surface);
   color: var(--md-primary);
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.drawer-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  margin-top: 10px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-container-high);
+  border: 1px solid var(--md-outline-variant);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-short) var(--ease), color var(--dur-short) var(--ease), border-color var(--dur-short) var(--ease);
+}
+.drawer-action-btn:hover {
+  background: var(--md-surface-container-highest);
+  color: var(--md-on-surface);
+}
+.drawer-action-btn:active {
+  background: var(--md-surface-container-highest);
+  transform: scale(0.98);
 }
 
 /* Markdown styling in chat */

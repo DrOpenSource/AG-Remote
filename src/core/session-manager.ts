@@ -1,5 +1,5 @@
 import EventEmitter from 'events';
-import type { IdeAdapter, SessionSnapshot, Approval, ApprovalOption, AdapterEvent, PromptImage } from './types.ts';
+import type { IdeAdapter, SessionSnapshot, Approval, ApprovalOption, AdapterEvent, PromptImage, PromptFile } from './types.ts';
 import { AuthManager } from './auth.ts';
 import { auditLogger, AuditLogger } from './logger.ts';
 import { WindowRegistry, windowRegistry, type RegisteredWindow } from './window-registry.ts';
@@ -152,8 +152,8 @@ export class SessionManager extends EventEmitter {
     return this.channel(windowId).getSnapshot();
   }
 
-  public async sendPrompt(text: string, windowId?: string, images?: PromptImage[]): Promise<void> {
-    await this.channel(windowId).sendPrompt(text, images);
+  public async sendPrompt(text: string, windowId?: string, images?: PromptImage[], files?: PromptFile[]): Promise<void> {
+    await this.channel(windowId).sendPrompt(text, images, files);
   }
 
   public async approve(id: string, response?: string, option?: ApprovalOption, windowId?: string): Promise<void> {

@@ -433,6 +433,23 @@ async function run() {
   fs.utimesSync(stale, weekAgo, weekAgo);
   await adapter.sendPrompt('again', [{ mimeType: 'image/png', data: Buffer.from('third').toString('base64') }]);
   assert(!fs.existsSync(stale), 'uploads older than 7 days are cleaned up');
+
+  // 0.3.0-T4: Adapter test for files attached to prompt
+  state.calls = [];
+  const samplePdf = { name: 'specs.pdf', mimeType: 'application/pdf', data: Buffer.from('spec-content').toString('base64') };
+  const pathTraversalFile = { name: '../../evil.txt', mimeType: 'text/plain', data: Buffer.from('traversal').toString('base64') };
+  await adapter.sendPrompt('examine these', [], [samplePdf, pathTraversalFile]);
+  const fileCalls = state.calls.filter(c => c.method === 'SendUserCascadeMessage');
+  const filePromptText = fileCalls[0]?.body.items?.[0]?.text || '';
+  assert(fileCalls.length === 1 && filePromptText.startsWith('examine these'), 'files prompt sent, user text first');
+  const savedPdfPath = [...filePromptText.matchAll(/(\S+[\\/]\.ag-remote[\\/]uploads[\\/][\w.-]+\.pdf)/g)][0]?.[1];
+  assert(!!savedPdfPath && path.isAbsolute(savedPdfPath), 'prompt names the saved pdf by its absolute path');
+  assert(fs.readFileSync(savedPdfPath, 'utf8') === 'spec-content', 'pdf saved into project with exact bytes');
+  assert(!filePromptText.includes('..'), 'prompt sanitized path traversal filename');
+  const filesInUploads = fs.readdirSync(uploadsDir);
+  assert(filesInUploads.some(f => f.endsWith('specs.pdf')), 'specs.pdf saved with safe name');
+  assert(filesInUploads.some(f => f.endsWith('evil.txt')), 'evil.txt saved inside uploads directory (no traversal)');
+
   await adapter.disconnect();
 
   const offline = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });

@@ -81,7 +81,7 @@ async function runTests() {
   link.wake();
   assert(current().sent.filter((s) => s === 'ping').length === 1, 'a second wake while the check runs sends no second ping');
   current().receive('pong');
-  await sleep(2200);
+  await sleep(600);
   assert(sockets() === 1 && !current().closed, 'relay answered: the same socket and session carry on (no new handshake)');
 
   console.log('\n[3] Socket died while the phone slept');
@@ -89,10 +89,10 @@ async function runTests() {
   link.lastActivity = Date.now() - 60_000;
   const dead = current();
   link.wake();
-  await sleep(1000);
-  assert(sockets() === 1, 'no answer yet after 1 s: still waiting');
-  await sleep(1200);
-  assert(sockets() === 2 && dead.closed && dead.onclose === null, 'no answer in 2 s: the dead socket is dropped and one new one opened');
+  await sleep(200);
+  assert(sockets() === 1, 'no answer yet after 200 ms: still waiting');
+  await sleep(400);
+  assert(sockets() === 2 && dead.closed && dead.onclose === null, 'no answer in 500 ms: the dead socket is dropped and one new one opened');
   assert(states[states.length - 1] === 'connecting', 'state goes back to connecting');
 
   console.log('\n[4] Socket closed by the phone');

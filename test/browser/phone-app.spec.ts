@@ -205,3 +205,96 @@ test('stop button appears while the agent works and stops it', async ({ page }) 
   await expect.poll(async () => (await calls()).some(c => c.type === 'stop')).toBe(true);
   await expect(page.locator('#statusText')).toHaveText('Ready');
 });
+
+test.describe('voice input (0.3.0-T1 & T2)', () => {
+  test('mic button appears when speech recognition is supported on secure context, fills input and never sends on its own', async ({ page }) => {
+    // Inject mock SpeechRecognition before app loads
+    await page.addInitScript(() => {
+      class MockSpeechRecognition {
+        continuous = false;
+        interimResults = false;
+        lang = 'en-US';
+        onstart: (() => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: ((e: any) => void) | null = null;
+        onresult: ((e: any) => void) | null = null;
+
+        start() {
+          (window as any).__mockSpeechInstance = this;
+          setTimeout(() => this.onstart && this.onstart(), 10);
+        }
+        stop() {
+          setTimeout(() => this.onend && this.onend(), 10);
+        }
+        abort() {
+          setTimeout(() => this.onend && this.onend(), 10);
+        }
+      }
+      (window as any).SpeechRecognition = MockSpeechRecognition;
+    });
+
+    await openApp(page);
+    const micBtn = page.locator('#btnMic');
+    await expect(micBtn).toBeVisible();
+
+    // Click to start listening
+    await micBtn.click();
+    await expect(micBtn).toHaveClass(/listening/);
+
+    // Simulate voice dictation result
+    await page.evaluate(() => {
+      const inst = (window as any).__mockSpeechInstance;
+      if (inst && inst.onresult) {
+        inst.onresult({
+          results: [
+            [{ transcript: 'Refactor database models' }]
+          ]
+        });
+      }
+    });
+
+    // Check textarea contains transcribed text
+    await expect(page.locator('#promptInput')).toHaveValue('Refactor database models');
+
+    // Speaking fills the box but never sends on its own
+    const sentCalls = await calls();
+    const promptCalls = sentCalls.filter(c => c.type === 'prompt');
+    expect(promptCalls.length).toBe(0);
+
+    // Send button is now enabled
+    await expect(page.locator('#btnSend')).toBeEnabled();
+
+    // Tap mic again to stop
+    await micBtn.click();
+    await expect(micBtn).not.toHaveClass(/listening/);
+  });
+
+  test('mic button is hidden on plain HTTP (Wi-Fi mode) or when unsupported', async ({ page }) => {
+    await page.addInitScript(() => {
+      delete (window as any).SpeechRecognition;
+      delete (window as any).webkitSpeechRecognition;
+    });
+
+    await openApp(page);
+    await expect(page.locator('#btnMic')).toBeHidden();
+  });
+});
+
+test('attach tray shows file chips with name and size and remove works (0.3.0-T5)', async ({ page }) => {
+  await openApp(page);
+  const filePayload = {
+    name: 'architecture.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('fake pdf data of some length')
+  };
+  await page.setInputFiles('#attachInput', [filePayload]);
+  const chip = page.locator('.attach-item.file-item').first();
+  await expect(chip).toBeVisible();
+  await expect(chip.locator('.attach-file-name')).toHaveText('architecture.pdf');
+  await expect(chip.locator('.attach-file-size')).toBeVisible();
+
+  // Remove works
+  await chip.locator('.attach-remove').click();
+  await expect(chip).toBeHidden();
+  await expect(page.locator('#attachTray')).toBeHidden();
+});

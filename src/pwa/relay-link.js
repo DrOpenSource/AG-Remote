@@ -10,7 +10,7 @@ const APPROVAL_WAIT_MS = APPROVAL_TIMEOUT_MS + 15000;
 const PING_MS = 25000;
 // Waking up: how long a ping to an open socket may take before the socket counts as dead, how
 // recently the relay must have sent something to skip the ping, and how long opening may take.
-const PROBE_MS = 2000;
+const PROBE_MS = 500;
 const FRESH_MS = 3000;
 const CONNECT_STUCK_MS = 8000;
 const CLOSE_ROOM_FULL = 4002;

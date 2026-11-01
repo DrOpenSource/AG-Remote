@@ -32,3 +32,4 @@ playwright-report/**
 .ag-remote/**
 assets/banner.png
 assets/architecture-diagram.svg
+dist/pwa/fonts/OFL.txt

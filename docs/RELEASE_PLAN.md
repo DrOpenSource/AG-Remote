@@ -204,16 +204,16 @@ Release
 **Goal:** the two biggest input gaps against competitors.
 
 **Tests first**
-- [ ] `0.3.0-T1` Browser test with a stubbed `SpeechRecognition`: the mic button appears only when supported and on HTTPS; speaking fills the message box; it never sends on its own.
-- [ ] `0.3.0-T2` Browser test: on plain HTTP (Wi-Fi mode) the mic button is hidden.
-- [ ] `0.3.0-T3` API test: `/api/prompt` accepts `files` (PDF, text, code, logs) up to the size limit; rejects executables and oversized files.
-- [ ] `0.3.0-T4` Adapter test: files are saved under `.ag-remote/uploads/` with safe names (no path traversal), and the prompt names them.
-- [ ] `0.3.0-T5` Browser test: the attach tray shows file chips with name and size; remove works.
+- [x] `0.3.0-T1` Browser test with a stubbed `SpeechRecognition`: the mic button appears only when supported and on HTTPS; speaking fills the message box; it never sends on its own.
+- [x] `0.3.0-T2` Browser test: on plain HTTP (Wi-Fi mode) the mic button is hidden.
+- [x] `0.3.0-T3` API test: `/api/prompt` accepts `files` (PDF, text, code, logs) up to the size limit; rejects executables and oversized files.
+- [x] `0.3.0-T4` Adapter test: files are saved under `.ag-remote/uploads/` with safe names (no path traversal), and the prompt names them.
+- [x] `0.3.0-T5` Browser test: the attach tray shows file chips with name and size; remove works.
 
 **Build**
-- [ ] `0.3.0-B1` Mic button using the browser's built-in speech recognition (free, on-device or by the browser vendor; no service of ours).
-- [ ] `0.3.0-B2` File picker and file chips in the phone app.
-- [ ] `0.3.0-B3` File handling on the PC (reuse the image fallback path).
+- [x] `0.3.0-B1` Mic button using the browser's built-in speech recognition (free, on-device or by the browser vendor; no service of ours).
+- [x] `0.3.0-B2` File picker and file chips in the phone app.
+- [x] `0.3.0-B3` File handling on the PC (reuse the image fallback path).
 
 **Manual checks**
 - [ ] `0.3.0-V1` Dictate a prompt on Android Chrome and iPhone Safari (relay).
@@ -352,9 +352,9 @@ Release
 | 0.2.3 | CI on 3 OSes, browser tests, attachments confirmed | ✅ Released 2026-10-29 |
 | 0.2.4 | Short pairing codes, QR opens the installed app | ✅ Released 2026-10-29 |
 | 0.2.5 | Safer pairing: "Allow this phone?", relay-only default, relay limits; every window its own chat | ✅ Released 2026-10-30 |
-| 0.2.6 | Notifications that say which project and what it wants; instant wake-up | 🟡 Ready for testing |
+| 0.2.6 | Notifications that say which project and what it wants; instant wake-up, tap-to-reconnect, and PWA reload | ✅ Released |
 | 0.3.0 | Voice input, any file | ⬜ Next |
-| 0.3.1 | Readable replies, listing polish | ⬜ |
+| 0.3.1 | Listing polish (GFM formatting already shipped) | ⬜ |
 | 0.4.0 | Diffs, safe auto-approve | ⬜ |
 | 0.4.1 | History and search, model and mode | ⬜ |
 | 0.4.2 | Git basics | ⬜ |

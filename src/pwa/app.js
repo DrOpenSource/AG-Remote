@@ -12,6 +12,7 @@
   const drawerWindowsList = document.getElementById('drawerWindowsList');
   const drawerHistoryList = document.getElementById('drawerHistoryList');
   const btnAutoPilotBadge = document.getElementById('btnAutoPilotBadge');
+  const btnReloadApp = document.getElementById('btnReloadApp');
   const toggleAutoPilot = document.getElementById('toggleAutoPilot');
   const themeBtnSystem = document.getElementById('themeBtnSystem');
   const themeBtnLight = document.getElementById('themeBtnLight');
@@ -36,6 +37,7 @@
   const btnSend = document.getElementById('btnSend');
   const lastActiveLine = document.getElementById('lastActive');
   const btnAttach = document.getElementById('btnAttach');
+  const btnMic = document.getElementById('btnMic');
   const attachInput = document.getElementById('attachInput');
   const attachTray = document.getElementById('attachTray');
   const toastBanner = document.getElementById('toastBanner');
@@ -718,12 +720,55 @@
     };
     statusText.textContent = customText || labels[status] || status;
 
+    if (status === 'disconnected') {
+      statusBadge.title = 'Tap to reconnect';
+      statusBadge.setAttribute('role', 'button');
+      statusBadge.setAttribute('tabindex', '0');
+    } else {
+      statusBadge.title = '';
+      statusBadge.setAttribute('role', 'status');
+      statusBadge.removeAttribute('tabindex');
+    }
+
     if (status === 'generating') {
       btnStop.classList.remove('hidden');
     } else {
       btnStop.classList.add('hidden');
     }
   }
+
+  // Tap statusBadge to reconnect when offline or disconnected
+  function triggerReconnect() {
+    const st = statusBadge.getAttribute('data-status');
+    const txt = (statusText.textContent || '').trim().toLowerCase();
+    const canReconnect = st === 'disconnected' || txt === 'offline' || txt === 'disconnected' || txt === 'pc offline' || txt === 'connection error';
+    if (!canReconnect) return;
+
+    if (navigator.vibrate) navigator.vibrate(30);
+    updateStatus('disconnected', 'Reconnecting...');
+    sessionLabel.textContent = 'Reconnecting...';
+
+    if (relayMode && relay) {
+      relay.restart();
+    } else {
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+        ws = null;
+      }
+      isReconnecting = false;
+      reconnectAttempts = 0;
+      connectWebSocket();
+    }
+    resyncState();
+  }
+
+  statusBadge.addEventListener('click', triggerReconnect);
+  statusBadge.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      triggerReconnect();
+    }
+  });
 
   // Clipboard helper
   async function copyToClipboard(text, btn, feedbackText = 'Copied') {
@@ -1296,11 +1341,18 @@
     if (tabId === activeTabId) appendChatMessage(msg);
   }
 
-  // Images picked on the phone, already compressed: { mimeType, data (base64), src (data: URL) }
-  const MAX_ATTACHMENTS = 4;
+  // Attachments picked on the phone: images (compressed) or files (PDF, txt, code, etc.)
+  const MAX_ATTACHMENTS = 5;
   const MAX_IMAGE_EDGE = 1600;
   const TARGET_IMAGE_BYTES = 400 * 1024;
+  const BLOCKED_EXTENSIONS = new Set(['.exe', '.bat', '.cmd', '.dll', '.msi', '.com', '.scr', '.vbs', '.cpl', '.pif']);
   let attachments = [];
+
+  function formatFileSize(bytes) {
+    if (!bytes || bytes < 1024) return (bytes || 0) + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
 
   function updateSendEnabled() {
     btnSend.disabled = promptInput.value.trim().length === 0 && attachments.length === 0;
@@ -1354,36 +1406,90 @@
     attachTray.classList.toggle('hidden', attachments.length === 0);
     attachments.forEach((a, i) => {
       const item = document.createElement('div');
-      item.className = 'attach-item';
-      const img = document.createElement('img');
-      img.src = a.src;
-      img.alt = `Attachment ${i + 1}`;
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'attach-remove';
-      remove.setAttribute('aria-label', 'Remove image');
-      remove.textContent = '×';
-      remove.addEventListener('click', () => {
-        attachments.splice(i, 1);
-        renderAttachTray();
-        updateSendEnabled();
-      });
-      item.append(img, remove);
+      if (a.kind === 'file') {
+        item.className = 'attach-item file-item';
+        const icon = document.createElement('div');
+        icon.className = 'attach-file-icon';
+        icon.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        const info = document.createElement('div');
+        info.className = 'attach-file-info';
+        const name = document.createElement('span');
+        name.className = 'attach-file-name';
+        name.textContent = a.name;
+        name.title = a.name;
+        const size = document.createElement('span');
+        size.className = 'attach-file-size';
+        size.textContent = formatFileSize(a.size || 0);
+        info.append(name, size);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'attach-remove';
+        remove.setAttribute('aria-label', 'Remove file');
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+          attachments.splice(i, 1);
+          renderAttachTray();
+          updateSendEnabled();
+        });
+        item.append(icon, info, remove);
+      } else {
+        item.className = 'attach-item image-item';
+        const img = document.createElement('img');
+        img.src = a.src;
+        img.alt = `Attachment ${i + 1}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'attach-remove';
+        remove.setAttribute('aria-label', 'Remove image');
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+          attachments.splice(i, 1);
+          renderAttachTray();
+          updateSendEnabled();
+        });
+        item.append(img, remove);
+      }
       attachTray.appendChild(item);
     });
   }
 
   async function addAttachments(files) {
+    const list = Array.from(files);
     const room = MAX_ATTACHMENTS - attachments.length;
-    const picked = Array.from(files).filter(f => f.type.startsWith('image/'));
-    if (picked.length > room) showToast(`Up to ${MAX_ATTACHMENTS} images per message.`);
+    if (list.length > room) showToast(`Up to ${MAX_ATTACHMENTS} attachments per message.`);
     btnAttach.disabled = true;
     try {
-      for (const file of picked.slice(0, Math.max(0, room))) {
-        try {
-          attachments.push(await compressImage(file));
-        } catch (_) {
-          showToast('Could not read that image.');
+      for (const file of list.slice(0, Math.max(0, room))) {
+        const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+        if (BLOCKED_EXTENSIONS.has(ext)) {
+          showToast(`Executable files like ${ext} are not allowed.`);
+          continue;
+        }
+        if (file.type.startsWith('image/')) {
+          try {
+            const compressed = await compressImage(file);
+            attachments.push({ kind: 'image', ...compressed, name: file.name, size: file.size });
+          } catch (_) {
+            showToast('Could not read that image.');
+          }
+        } else {
+          if (file.size > 10 * 1024 * 1024) {
+            showToast('File exceeds 10 MB limit.');
+            continue;
+          }
+          try {
+            const data = await blobToBase64(file);
+            attachments.push({
+              kind: 'file',
+              name: file.name,
+              mimeType: file.type || 'application/octet-stream',
+              data,
+              size: file.size
+            });
+          } catch (_) {
+            showToast('Could not read that file.');
+          }
         }
         renderAttachTray();
       }
@@ -1400,7 +1506,8 @@
     const sending = attachments;
 
     // Optimistic UI append
-    addLocalMessage(text.trim(), tabId, sending.map(a => a.src));
+    const imageSrcs = sending.filter(a => a.kind === 'image' && a.src).map(a => a.src);
+    addLocalMessage(text.trim(), tabId, imageSrcs);
     promptInput.value = '';
     promptInput.style.height = 'auto';
     promptInput.blur();
@@ -1410,7 +1517,10 @@
     updateSendEnabled();
 
     const body = { text: text.trim() };
-    if (sending.length) body.images = sending.map(a => ({ mimeType: a.mimeType, data: a.data }));
+    const imagesToSend = sending.filter(a => a.kind === 'image');
+    const filesToSend = sending.filter(a => a.kind === 'file');
+    if (imagesToSend.length) body.images = imagesToSend.map(a => ({ mimeType: a.mimeType, data: a.data }));
+    if (filesToSend.length) body.files = filesToSend.map(a => ({ name: a.name, mimeType: a.mimeType, data: a.data }));
     let failed = false;
     try {
       const res = await api('POST', '/api/prompt', withWindow(body, tabId), sending.length ? 60000 : undefined);
@@ -1518,6 +1628,78 @@
     tokenInput.value = '';
   });
 
+  // 6. Voice Input / Web Speech API (0.3.0-B1)
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  let speechRecognition = null;
+  let isListening = false;
+
+  if (SpeechRec && isSecure && btnMic) {
+    btnMic.classList.remove('hidden');
+
+    try {
+      speechRecognition = new SpeechRec();
+      speechRecognition.continuous = true;
+      speechRecognition.interimResults = true;
+      speechRecognition.lang = navigator.language || 'en-US';
+
+      let baseText = '';
+
+      speechRecognition.onstart = () => {
+        isListening = true;
+        btnMic.classList.add('listening');
+        btnMic.title = 'Listening... tap to stop';
+        baseText = promptInput.value ? promptInput.value.trim() + ' ' : '';
+      };
+
+      speechRecognition.onresult = (event) => {
+        let transcript = '';
+        const startIndex = typeof event.resultIndex === 'number' ? event.resultIndex : 0;
+        for (let i = startIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        promptInput.value = baseText + transcript;
+        promptInput.style.height = 'auto';
+        promptInput.style.height = Math.min(promptInput.scrollHeight, 144) + 'px';
+        updateSendEnabled();
+      };
+
+      speechRecognition.onerror = () => {
+        stopListening();
+      };
+
+      speechRecognition.onend = () => {
+        stopListening();
+      };
+    } catch (_) {
+      btnMic.classList.add('hidden');
+    }
+
+    function stopListening() {
+      if (!isListening) return;
+      isListening = false;
+      btnMic.classList.remove('listening');
+      btnMic.title = 'Voice input';
+      try {
+        speechRecognition.stop();
+      } catch (_) {}
+    }
+
+    btnMic.addEventListener('click', () => {
+      if (isListening) {
+        stopListening();
+      } else {
+        try {
+          speechRecognition.start();
+        } catch (_) {}
+      }
+    });
+
+    promptForm.addEventListener('submit', () => {
+      stopListening();
+    });
+  }
+
   btnAttach.addEventListener('click', () => attachInput.click());
   attachInput.addEventListener('change', () => {
     const files = attachInput.files;
@@ -1525,9 +1707,9 @@
     attachInput.value = ''; // lets the same image be picked again
   });
 
-  // Pasting an image (e.g. from the clipboard on a tablet or desktop browser) attaches it
+  // Pasting an image or file attaches it
   promptInput.addEventListener('paste', (e) => {
-    const files = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'));
+    const files = Array.from(e.clipboardData?.files || []);
     if (files.length) {
       e.preventDefault();
       addAttachments(files);
@@ -1863,6 +2045,23 @@
 
   function closeDrawer() {
     if (drawerBackdrop) drawerBackdrop.classList.add('hidden');
+  }
+
+  if (btnReloadApp) {
+    btnReloadApp.addEventListener('click', async () => {
+      if (navigator.vibrate) navigator.vibrate(30);
+      closeDrawer();
+      sessionLabel.textContent = 'Reloading...';
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg) await reg.update();
+        } catch (_) {}
+      }
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+    });
   }
 
   if (btnOpenDrawer) btnOpenDrawer.addEventListener('click', openDrawer);

@@ -456,7 +456,8 @@ export class RemoteServer {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not Found' }));
     } catch (err: any) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
+      const status = (err?.message === 'Body payload too large' || err?.message === 'Invalid JSON') ? 400 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err?.message || 'Internal Server Error' }));
     }
   }
@@ -466,7 +467,7 @@ export class RemoteServer {
       let data = '';
       req.on('data', chunk => {
         data += chunk;
-        if (data.length > 10 * 1024 * 1024) { // 10MB: room for base64 image attachments
+        if (data.length > 25 * 1024 * 1024) { // 25MB: room for base64 attachments up to 10MB decoded
           reject(new Error('Body payload too large'));
         }
       });

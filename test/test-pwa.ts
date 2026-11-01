@@ -54,12 +54,17 @@ async function runTests() {
   assert(indexRes.body.includes('id="chatFeed"'), 'index.html contains #chatFeed');
   assert(indexRes.body.includes('id="promptForm"'), 'index.html contains #promptForm');
   assert(indexRes.body.includes('id="btnStop"'), 'index.html contains #btnStop');
+  assert(indexRes.body.includes('id="btnReloadApp"'), 'index.html contains #btnReloadApp for hard reload');
+  assert(indexRes.body.includes('id="btnMic"'), 'index.html contains #btnMic for voice dictation');
+  assert(indexRes.body.includes('accept="image/*,.pdf,.txt,.md,.log,.json,.csv,.ts,.js,.py"'), 'index.html contains #attachInput with documents and code');
 
   // 2. GET /app.css
   const cssRes = await fetchUrl('/app.css');
   assert(cssRes.status === 200, 'GET /app.css returns HTTP 200 OK');
   assert(cssRes.type.includes('text/css'), 'GET /app.css serves Content-Type text/css');
   assert(cssRes.body.includes('--bg-primary'), 'app.css contains dark mode tokens');
+  assert(cssRes.body.includes('drawer-action-btn'), 'app.css contains drawer-action-btn for reload button');
+  assert(cssRes.body.includes('file-item'), 'app.css contains .attach-item.file-item for document attachments');
 
   // 3. GET /app.js
   const jsRes = await fetchUrl('/app.js');
@@ -67,6 +72,10 @@ async function runTests() {
   assert(jsRes.type.includes('application/javascript'), 'GET /app.js serves Content-Type application/javascript');
   assert(jsRes.body.includes('connectWebSocket'), 'app.js contains WebSocket connection logic');
   assert(jsRes.body.includes('visibilitychange'), 'app.js contains phone sleep/wake auto-reconnect logic');
+  assert(jsRes.body.includes('triggerReconnect'), 'app.js contains tap-to-reconnect logic on status badge');
+  assert(jsRes.body.includes('btnReloadApp'), 'app.js contains btnReloadApp handler for hard reload');
+  assert(jsRes.body.includes('speechRecognition'), 'app.js contains speech recognition dictation logic');
+  assert(jsRes.body.includes('formatFileSize'), 'app.js contains file attachment size formatting');
 
   // 4. GET /manifest.json
   const manifestRes = await fetchUrl('/manifest.json');

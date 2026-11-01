@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0: Voice input, any file attachment, and quick-reconnect controls
+
+> **After installing this update, quit Antigravity completely** (File → Exit) and open it again. The phone app updates itself the next time you open it.
+
+- **Voice input (dictation).** Tap the 🎙️ mic button next to the prompt box to dictate your message hands-free using your device's built-in speech recognition. Speaking fills the text box so you can review it before sending; it never auto-submits. (Requires a secure context: available over the relay at `https://remote.taqnik.in` or `localhost`).
+- **Attach any document or code file.** Tap the 📎 paperclip button to attach PDFs, text documents, Markdown files, logs, CSVs, JSON, or code files (`.ts`, `.js`, `.py`).
+- **Interactive file chips.** Picked files show as clean chips with filename, formatted file size, and a quick remove button. Files are validated (up to 5 files / 10 MB total, executables rejected) and saved into `<project>/.ag-remote/uploads/` with path-traversal immunity so your agent can inspect them directly.
+- **Tap-to-reconnect status badge.** When the phone loses background connection, tapping the status badge ("Disconnected", "Offline", "PC offline") triggers an immediate reconnect with visual and haptic feedback.
+- **Reload App button in drawer.** A dedicated "Reload App" button in the navigation drawer footer lets you hard-refresh the PWA to pull the latest shell updates and clear stale memory.
+
 ## 0.2.6: Notifications you can tell apart, and the phone is live as soon as you look
 
 > **After installing this update, quit Antigravity completely** (File → Exit) and open it again, so every window runs the new version. The phone app updates itself the next time you open it.

@@ -113,8 +113,26 @@ async function runTests() {
   assert(Array.isArray(stateRes.data?.messages), 'Snapshot contains messages array');
 
   // POST /api/prompt validation (empty text rejected)
+  adapter.sendPrompt = async () => {};
   const emptyPromptRes = await makeRequest('POST', '/api/prompt', { Authorization: `Bearer ${sessionToken}` }, { text: '' });
   assert(emptyPromptRes.statusCode === 400, 'POST /api/prompt with empty text returns 400 Bad Request');
+
+  // 0.3.0-T3: POST /api/prompt files validation
+  const validFile = { name: 'report.pdf', mimeType: 'application/pdf', data: Buffer.from('dummy-pdf').toString('base64') };
+  const validFilePrompt = await makeRequest('POST', '/api/prompt', { Authorization: `Bearer ${sessionToken}` }, { text: '', files: [validFile] });
+  assert(validFilePrompt.statusCode === 200, 'POST /api/prompt accepts valid file attachment');
+
+  const exeFile = { name: 'virus.exe', mimeType: 'application/x-msdownload', data: Buffer.from('MZ...').toString('base64') };
+  const exePrompt = await makeRequest('POST', '/api/prompt', { Authorization: `Bearer ${sessionToken}` }, { text: 'run this', files: [exeFile] });
+  assert(exePrompt.statusCode === 400, 'POST /api/prompt rejects executable files (.exe)');
+
+  const batFile = { name: 'script.bat', mimeType: 'text/plain', data: Buffer.from('echo hi').toString('base64') };
+  const batPrompt = await makeRequest('POST', '/api/prompt', { Authorization: `Bearer ${sessionToken}` }, { text: 'run this', files: [batFile] });
+  assert(batPrompt.statusCode === 400, 'POST /api/prompt rejects executable files (.bat)');
+
+  const hugeFile = { name: 'huge.bin', mimeType: 'application/octet-stream', data: 'A'.repeat(15 * 1024 * 1024) };
+  const hugePrompt = await makeRequest('POST', '/api/prompt', { Authorization: `Bearer ${sessionToken}` }, { text: 'too big', files: [hugeFile] });
+  assert(hugePrompt.statusCode === 400, 'POST /api/prompt rejects oversized files');
 
   // POST /api/approve rejection of nonexistent ID
   const approveBadRes = await makeRequest('POST', '/api/approve', { Authorization: `Bearer ${sessionToken}` }, { id: 'nonexistent-id' });

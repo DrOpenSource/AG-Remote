@@ -1,4 +1,4 @@
-import type { IdeAdapter, SessionSnapshot, SessionStatus, Approval, ApprovalOption, AdapterEvent, PromptImage } from '../core/types.ts';
+import type { IdeAdapter, SessionSnapshot, SessionStatus, Approval, ApprovalOption, AdapterEvent, PromptImage, PromptFile } from '../core/types.ts';
 import { type AdapterConfig, defaultConfig } from './config.ts';
 import { SessionWatcher } from './session-watcher.ts';
 import { LsBridge, LsBridgeError, normalizeWorkspace, type LiveInteraction } from './ls-bridge.ts';
@@ -31,6 +31,32 @@ export function saveUploads(workspacePath: string, images: PromptImage[], now = 
   return images.map((img, i) => {
     const file = path.join(dir, `${now}-${i + 1}.${IMAGE_EXT[img.mimeType] || 'img'}`);
     fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
+    return file;
+  });
+}
+
+/**
+ * Saves phone files to <workspace>/.ag-remote/uploads so the agent can inspect them.
+ * Sanitizes filenames to prevent path traversal. Uploads older than 7 days are removed.
+ * Returns absolute paths.
+ */
+export function saveUploadFiles(workspacePath: string, files: PromptFile[], now = Date.now()): string[] {
+  const root = path.join(workspacePath, '.ag-remote');
+  const dir = path.join(root, 'uploads');
+  fs.mkdirSync(dir, { recursive: true });
+  const ignore = path.join(root, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  for (const old of fs.readdirSync(dir)) {
+    try {
+      const p = path.join(dir, old);
+      if (now - fs.statSync(p).mtimeMs > UPLOAD_MAX_AGE_MS) fs.rmSync(p);
+    } catch (_) {}
+  }
+  return files.map((f, i) => {
+    const base = path.basename(f.name || 'file');
+    const safeName = base.replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+    const file = path.join(dir, `${now}-${i + 1}-${safeName}`);
+    fs.writeFileSync(file, Buffer.from(f.data, 'base64'));
     return file;
   });
 }
@@ -238,14 +264,14 @@ export class AntigravityAdapter implements IdeAdapter {
     return { approval, live: this.livePending };
   }
 
-  public async sendPrompt(text: string, images: PromptImage[] = []): Promise<void> {
-    if (typeof text !== 'string' || (text.trim().length === 0 && images.length === 0)) {
+  public async sendPrompt(text: string, images: PromptImage[] = [], files: PromptFile[] = []): Promise<void> {
+    if (typeof text !== 'string' || (text.trim().length === 0 && images.length === 0 && files.length === 0)) {
       throw new Error('Prompt text cannot be empty');
     }
     const cid = this.watcher.getActiveConversationId();
     if (!this.ls) throw new Error(BRIDGE_UNAVAILABLE);
     if (!cid) throw new Error(NO_CONVERSATION);
-    auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), images: images.length, cascadeId: cid });
+    auditLogger.log('PROMPT', { textLength: text.length, preview: text.slice(0, 100), images: images.length, files: files.length, cascadeId: cid });
     let prompt = text.trim();
     if (images.length) {
       const paths = saveUploads(this.workspacePath, images);
@@ -253,6 +279,14 @@ export class AntigravityAdapter implements IdeAdapter {
       const note = images.length === 1
         ? `I attached an image from my phone. Open it to see it: ${paths[0]}`
         : `I attached ${images.length} images from my phone. Open them to see them:\n${paths.map(p => `- ${p}`).join('\n')}`;
+      prompt = prompt ? `${prompt}\n\n${note}` : note;
+    }
+    if (files.length) {
+      const paths = saveUploadFiles(this.workspacePath, files);
+      auditLogger.log('PROMPT_FILES_SAVED', { paths });
+      const note = files.length === 1
+        ? `I attached a file from my phone. Open it to inspect: ${paths[0]}`
+        : `I attached ${files.length} files from my phone. Open them to inspect:\n${paths.map(p => `- ${p}`).join('\n')}`;
       prompt = prompt ? `${prompt}\n\n${note}` : note;
     }
     try {

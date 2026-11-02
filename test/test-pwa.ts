@@ -65,6 +65,8 @@ async function runTests() {
   assert(cssRes.body.includes('--bg-primary'), 'app.css contains dark mode tokens');
   assert(cssRes.body.includes('drawer-action-btn'), 'app.css contains drawer-action-btn for reload button');
   assert(cssRes.body.includes('file-item'), 'app.css contains .attach-item.file-item for document attachments');
+  assert(cssRes.body.includes('.table-container table') && cssRes.body.includes('overflow-wrap: break-word'), 'app.css contains table formatting and wrap safeguards');
+  assert(cssRes.body.includes('.drawer-item-badge') && cssRes.body.includes('flex-shrink: 0'), 'app.css contains drawer badge shape and whitespace safeguards');
 
   // 3. GET /app.js
   const jsRes = await fetchUrl('/app.js');
@@ -76,6 +78,7 @@ async function runTests() {
   assert(jsRes.body.includes('btnReloadApp'), 'app.js contains btnReloadApp handler for hard reload');
   assert(jsRes.body.includes('speechRecognition'), 'app.js contains speech recognition dictation logic');
   assert(jsRes.body.includes('formatFileSize'), 'app.js contains file attachment size formatting');
+  assert(jsRes.body.includes('splitTableCells'), 'app.js contains robust GFM table parsing with alignment support');
 
   // 4. GET /manifest.json
   const manifestRes = await fetchUrl('/manifest.json');

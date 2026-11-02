@@ -913,24 +913,59 @@
           const thead = document.createElement('thead');
           const tbody = document.createElement('tbody');
 
-          const headCells = tableLines[0].split('|').slice(1, -1);
+          function splitTableCells(rowStr) {
+            let s = rowStr.trim();
+            if (s.startsWith('|')) s = s.slice(1);
+            if (s.endsWith('|')) s = s.slice(0, -1);
+            const cells = [];
+            let current = '';
+            let inCode = false;
+            for (let c = 0; c < s.length; c++) {
+              const ch = s[c];
+              if (ch === '`') {
+                inCode = !inCode;
+                current += ch;
+              } else if (ch === '|' && !inCode) {
+                cells.push(current);
+                current = '';
+              } else {
+                current += ch;
+              }
+            }
+            cells.push(current);
+            return cells;
+          }
+
+          const headCells = splitTableCells(tableLines[0]);
+          const delimCells = splitTableCells(tableLines[1]);
+          const alignments = delimCells.map(c => {
+            const t = c.trim();
+            if (t.startsWith(':') && t.endsWith(':')) return 'center';
+            if (t.endsWith(':')) return 'right';
+            if (t.startsWith(':')) return 'left';
+            return '';
+          });
+
           const trHead = document.createElement('tr');
-          for (const c of headCells) {
+          headCells.forEach((c, idx) => {
             const th = document.createElement('th');
+            if (alignments[idx]) th.style.textAlign = alignments[idx];
             renderInline(th, c.trim());
             trHead.appendChild(th);
-          }
+          });
           thead.appendChild(trHead);
           table.appendChild(thead);
 
           for (let r = 2; r < tableLines.length; r++) {
-            const rowCells = tableLines[r].split('|').slice(1, -1);
+            const rowCells = splitTableCells(tableLines[r]);
             const tr = document.createElement('tr');
-            for (const c of rowCells) {
+            headCells.forEach((_, idx) => {
               const td = document.createElement('td');
-              renderInline(td, c.trim());
+              if (alignments[idx]) td.style.textAlign = alignments[idx];
+              const cellText = (rowCells[idx] !== undefined ? rowCells[idx] : '').trim();
+              renderInline(td, cellText);
               tr.appendChild(td);
-            }
+            });
             tbody.appendChild(tr);
           }
           table.appendChild(tbody);

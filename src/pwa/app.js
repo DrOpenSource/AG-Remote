@@ -975,6 +975,15 @@
         }
       }
 
+      // 2b. Horizontal Rule
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+        const hr = document.createElement('hr');
+        hr.className = 'md-hr';
+        el.appendChild(hr);
+        i++;
+        continue;
+      }
+
       // 3. Headings
       const hMatch = line.match(/^(#{1,4})\s+(.+)$/);
       if (hMatch) {
@@ -1037,13 +1046,19 @@
 
       // 8. Regular paragraph
       const pLines = [];
-      while (i < lines.length && lines[i].trim().length > 0 &&
-             !lines[i].startsWith('```') &&
-             !lines[i].trim().startsWith('|') &&
-             !lines[i].match(/^(#{1,4})\s+/) &&
-             !lines[i].startsWith('>') &&
-             !/^[\*\-]\s+/.test(lines[i]) &&
-             !/^\d+\.\s+/.test(lines[i])) {
+      while (i < lines.length && lines[i].trim().length > 0) {
+        const cur = lines[i];
+        if (cur.startsWith('```')) break;
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(cur.trim())) break;
+        if (cur.trim().startsWith('|') && i + 1 < lines.length && /^\|\s*[-:]+/.test(lines[i + 1].trim())) break;
+        if (cur.match(/^(#{1,4})\s+/)) break;
+        if (cur.startsWith('>')) break;
+        if (/^[\*\-]\s+/.test(cur)) break;
+        if (/^\d+\.\s+/.test(cur)) break;
+        pLines.push(cur);
+        i++;
+      }
+      if (pLines.length === 0) {
         pLines.push(lines[i]);
         i++;
       }
@@ -2083,14 +2098,13 @@
   }
 
   if (btnReloadApp) {
-    btnReloadApp.addEventListener('click', async () => {
+    btnReloadApp.addEventListener('click', () => {
       if (navigator.vibrate) navigator.vibrate(30);
       closeDrawer();
       sessionLabel.textContent = 'Reloading...';
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.getRegistration();
-          if (reg) await reg.update();
+          navigator.serviceWorker.getRegistration().then(reg => { if (reg) reg.update(); }).catch(() => {});
         } catch (_) {}
       }
       setTimeout(() => {

@@ -1715,6 +1715,11 @@ body:has(.approval-card:not(.hidden)) .snackbar {
 .md-p:last-child {
   margin-bottom: 0;
 }
+.md-hr {
+  border: none;
+  border-top: 1px solid var(--md-outline-variant);
+  margin: 14px 0;
+}
 .chat-text strong {
   font-weight: 600;
   color: var(--md-on-surface);

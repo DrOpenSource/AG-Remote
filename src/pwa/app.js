@@ -1109,31 +1109,97 @@
         continue;
       }
 
-      // 5. Unordered List
-      if (/^[\*\-]\s+/.test(line)) {
-        const ul = document.createElement('ul');
-        ul.className = 'md-list';
-        while (i < lines.length && /^[\*\-]\s+/.test(lines[i])) {
-          const li = document.createElement('li');
-          renderInline(li, lines[i].replace(/^[\*\-]\s+/, ''));
-          ul.appendChild(li);
-          i++;
+      // 5 & 6. Lists (Unordered or Ordered, with nested sub-items)
+      const listMatch = line.match(/^(\s*)([\*\-]\s+|\d+\.\s+)(.*)$/);
+      if (listMatch && listMatch[1].length === 0) {
+        const isOrdered = /^\d+\./.test(listMatch[2]);
+        const listEl = document.createElement(isOrdered ? 'ol' : 'ul');
+        listEl.className = isOrdered ? 'md-list md-list-ordered' : 'md-list';
+        if (isOrdered) {
+          const startNum = parseInt(listMatch[2], 10);
+          if (!isNaN(startNum)) listEl.start = startNum;
         }
-        el.appendChild(ul);
-        continue;
-      }
 
-      // 6. Ordered List
-      if (/^\d+\.\s+/.test(line)) {
-        const ol = document.createElement('ol');
-        ol.className = 'md-list md-list-ordered';
-        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-          const li = document.createElement('li');
-          renderInline(li, lines[i].replace(/^\d+\.\s+/, ''));
-          ol.appendChild(li);
-          i++;
+        while (i < lines.length) {
+          const curLine = lines[i];
+          const curMatch = curLine.match(/^(\s*)([\*\-]\s+|\d+\.\s+)(.*)$/);
+          if (curMatch && curMatch[1].length === 0) {
+            const curIsOrdered = /^\d+\./.test(curMatch[2]);
+            if (curIsOrdered !== isOrdered) break;
+
+            const li = document.createElement('li');
+            if (isOrdered) {
+              const val = parseInt(curMatch[2], 10);
+              if (!isNaN(val)) li.value = val;
+            }
+            renderInline(li, curMatch[3]);
+            listEl.appendChild(li);
+            i++;
+
+            // Sub-items or continuation lines under this li
+            let subUl = null;
+            let subOl = null;
+            while (i < lines.length) {
+              const subLine = lines[i];
+              if (/^(#{1,6}\s+|```|>{1,}\s?|\||---|-{3,}|\*{3,}|_{3,})/.test(subLine.trim())) break;
+              const topCheck = subLine.match(/^([\*\-]\s+|\d+\.\s+)/);
+              if (topCheck) break;
+
+              const subMatch = subLine.match(/^\s+([\*\-]\s+|\d+\.\s+)(.*)$/);
+              if (subMatch) {
+                const subIsOrdered = /^\d+\./.test(subMatch[1]);
+                if (subIsOrdered) {
+                  if (!subOl) {
+                    subOl = document.createElement('ol');
+                    subOl.className = 'md-list md-list-ordered';
+                    li.appendChild(subOl);
+                  }
+                  const subLi = document.createElement('li');
+                  const sVal = parseInt(subMatch[1], 10);
+                  if (!isNaN(sVal)) subLi.value = sVal;
+                  renderInline(subLi, subMatch[2]);
+                  subOl.appendChild(subLi);
+                } else {
+                  if (!subUl) {
+                    subUl = document.createElement('ul');
+                    subUl.className = 'md-list';
+                    li.appendChild(subUl);
+                  }
+                  const subLi = document.createElement('li');
+                  renderInline(subLi, subMatch[2]);
+                  subUl.appendChild(subLi);
+                }
+                i++;
+                continue;
+              }
+
+              if (/^\s{2,}\S/.test(subLine)) {
+                const contDiv = document.createElement('div');
+                contDiv.className = 'md-list-cont';
+                renderInline(contDiv, subLine.trim());
+                li.appendChild(contDiv);
+                i++;
+                continue;
+              }
+
+              if (subLine.trim().length === 0) {
+                let nextIdx = i + 1;
+                while (nextIdx < lines.length && lines[nextIdx].trim().length === 0) nextIdx++;
+                if (nextIdx < lines.length && /^\s*([\*\-]\s+|\d+\.\s+)/.test(lines[nextIdx])) {
+                  i = nextIdx;
+                  break;
+                }
+                break;
+              }
+
+              break;
+            }
+            continue;
+          }
+          break;
         }
-        el.appendChild(ol);
+
+        el.appendChild(listEl);
         continue;
       }
 

@@ -28,10 +28,20 @@ async function runTests() {
   const brain = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-adapter-'));
   const logs = path.join(brain, '11111111-2222-3333-4444-555555555555', '.system_generated', 'logs');
   fs.mkdirSync(logs, { recursive: true });
+  const fullAgentResponse = 'Step 1: First part of long explanation.\n' + 'Middle content with crucial instructions.\n'.repeat(50) + 'Final summary and next actions.';
+  const compactAgentResponse = 'Step 1: First part of long explanation.\n<truncated 2500 bytes>\nFinal summary and next actions.';
+
   fs.writeFileSync(path.join(logs, 'transcript.jsonl'),
-    JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>add a parser test</USER_REQUEST>' }) + '\n');
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>add a parser test</USER_REQUEST>' }) + '\n' +
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: new Date().toISOString(), content: compactAgentResponse, truncated_fields: ['content'] }) + '\n');
+
+  fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'),
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>add a parser test</USER_REQUEST>' }) + '\n' +
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: new Date().toISOString(), content: fullAgentResponse }) + '\n');
+
   const threeHoursAgo = new Date(Date.now() - 3 * 3600 * 1000);
   fs.utimesSync(path.join(logs, 'transcript.jsonl'), threeHoursAgo, threeHoursAgo);
+  fs.utimesSync(path.join(logs, 'transcript_full.jsonl'), threeHoursAgo, threeHoursAgo);
   const adapter = new AntigravityAdapter(brain, { brainDir: brain }, { lsBridge: null });
 
   console.log('\n[Suite 1] Lifecycle & Contract Compliance');
@@ -47,6 +57,10 @@ async function runTests() {
   assert(['idle', 'generating', 'awaiting_approval', 'disconnected'].includes(snapshot.status), `Snapshot status is valid (${snapshot.status})`);
   assert(Array.isArray(snapshot.messages), `Messages is an array (length: ${snapshot.messages.length})`);
   assert(snapshot.messages.length > 0, `Captured conversation messages (count: ${snapshot.messages.length})`);
+  const agentMsg = snapshot.messages.find(m => m.role === 'agent');
+  assert(agentMsg !== undefined, 'Agent response message exists in snapshot');
+  assert(agentMsg?.text === fullAgentResponse, 'Long agent response resolves full untruncated content from transcript_full.jsonl');
+  assert(!agentMsg?.text.includes('<truncated'), 'Long agent response contains no <truncated ...> placeholder');
   assert(typeof snapshot.lastActivity === 'number' && Math.abs(snapshot.lastActivity - threeHoursAgo.getTime()) < 2000,
     'Snapshot carries when the conversation last changed (for the phone\'s "Last active" line)');
 

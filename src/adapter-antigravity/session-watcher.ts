@@ -22,6 +22,7 @@ export class SessionWatcher extends EventEmitter {
   private isWatching: boolean = false;
   private lastFollowCheck: number = 0;
   private rejectedConvId: string | null = null;
+  private fullContentCache: Map<string, string> = new Map();
 
   constructor(workspacePath: string = process.cwd(), config: AdapterConfig = defaultConfig) {
     super();
@@ -110,6 +111,56 @@ export class SessionWatcher extends EventEmitter {
       }
     }
     return out;
+  }
+
+  /**
+   * Resolves untruncated content from transcript_full.jsonl when transcript.jsonl has truncated_fields.
+   * Caches results so each truncated step is only resolved from disk once.
+   */
+  private getFullContent(lineIndex: number, stepIndex: number): string | null {
+    if (!this.activeTranscriptPath) return null;
+    const cacheKey = `${this.activeTranscriptPath}:${stepIndex}`;
+    if (this.fullContentCache.has(cacheKey)) {
+      return this.fullContentCache.get(cacheKey)!;
+    }
+
+    const fullPath = path.join(path.dirname(this.activeTranscriptPath), 'transcript_full.jsonl');
+    try {
+      if (!fs.existsSync(fullPath)) return null;
+      const rawFull = fs.readFileSync(fullPath, 'utf8');
+      const lines = rawFull.split(/\r?\n/);
+
+      // 1. Direct line index fast-path (compact and full transcripts have 1:1 matching lines)
+      if (lineIndex >= 0 && lineIndex < lines.length && lines[lineIndex].trim()) {
+        try {
+          const obj = JSON.parse(lines[lineIndex]);
+          if (obj.step_index === stepIndex && typeof obj.content === 'string') {
+            if (this.fullContentCache.size > 200) this.fullContentCache.clear();
+            this.fullContentCache.set(cacheKey, obj.content);
+            return obj.content;
+          }
+        } catch (_) {}
+      }
+
+      // 2. Search fallback in case line indices drifted
+      for (let j = lines.length - 1; j >= 0; j--) {
+        const line = lines[j].trim();
+        if (!line) continue;
+        if (!line.includes(`"step_index":${stepIndex}`) && !line.includes(`"step_index": ${stepIndex}`)) {
+          continue;
+        }
+        try {
+          const obj = JSON.parse(line);
+          if (obj.step_index === stepIndex && typeof obj.content === 'string') {
+            if (this.fullContentCache.size > 200) this.fullContentCache.clear();
+            this.fullContentCache.set(cacheKey, obj.content);
+            return obj.content;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   public resolveTranscriptPath(): string | null {
@@ -251,6 +302,7 @@ export class SessionWatcher extends EventEmitter {
 
     this.activeConvId = newest.id;
     this.activeTranscriptPath = newest.transcript;
+    this.fullContentCache.clear();
     this.lastProcessedLineCount = 0;
     this.lastSnapshot = { status: 'idle', messages: [], pendingApproval: null };
     this.emit('event', { type: 'session_changed', conversationId: newest.id } as AdapterEvent);
@@ -311,8 +363,13 @@ export class SessionWatcher extends EventEmitter {
           if (step.type === 'USER_INPUT') {
             // New user input concludes any preceding tool approvals
             pendingApproval = null;
-            const match = step.content?.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
-            const text = match ? match[1].trim() : (step.content || '').slice(0, 500);
+            let content = step.content || '';
+            if (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) {
+              const full = this.getFullContent(i, step.step_index);
+              if (full) content = full;
+            }
+            const match = content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
+            const text = match ? match[1].trim() : content.slice(0, 500);
             messages.push({
               id: `msg-${step.step_index}`,
               role: 'user',
@@ -342,11 +399,16 @@ export class SessionWatcher extends EventEmitter {
               pendingApproval = null;
             }
           } else if (step.type === 'PLANNER_RESPONSE') {
-            if (step.content) {
+            let content = step.content || '';
+            if (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) {
+              const full = this.getFullContent(i, step.step_index);
+              if (full) content = full;
+            }
+            if (content) {
               messages.push({
                 id: `msg-${step.step_index}`,
                 role: 'agent',
-                text: step.content,
+                text: content,
                 ts
               });
             }
@@ -415,11 +477,19 @@ export class SessionWatcher extends EventEmitter {
       const prevStatus = this.lastSnapshot.status;
       const prevApproval = this.lastSnapshot.pendingApproval;
 
-      // Detect new messages
+      // Detect new messages or content updates
       if (messages.length > this.lastSnapshot.messages.length) {
         const newMessages = messages.slice(this.lastSnapshot.messages.length);
         for (const msg of newMessages) {
           this.emit('event', { type: 'message', message: msg } as AdapterEvent);
+        }
+      } else {
+        for (let m = 0; m < messages.length; m++) {
+          const prevMsg = this.lastSnapshot.messages[m];
+          const curMsg = messages[m];
+          if (prevMsg && curMsg && prevMsg.id === curMsg.id && prevMsg.text !== curMsg.text) {
+            this.emit('event', { type: 'message', message: curMsg } as AdapterEvent);
+          }
         }
       }
       this.lastProcessedLineCount = lines.length;
@@ -508,6 +578,7 @@ export class SessionWatcher extends EventEmitter {
       this.currentWorkspace = workspacePath;
       this.activeConvId = null;
       this.activeTranscriptPath = this.resolveTranscriptPath();
+      this.fullContentCache.clear();
       this.lastProcessedLineCount = 0;
       this.lastSnapshot = {
         status: 'idle',
@@ -524,6 +595,7 @@ export class SessionWatcher extends EventEmitter {
       const changed = id !== this.activeConvId;
       this.activeConvId = id;
       this.activeTranscriptPath = transcript;
+      this.fullContentCache.clear();
       this.lastProcessedLineCount = 0;
       this.lastSnapshot = { status: 'idle', messages: [], pendingApproval: null };
       // Announce the switch before the new conversation's messages arrive, so the phone clears first.

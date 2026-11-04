@@ -1770,14 +1770,24 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   font-size: 14px;
 }
 .md-list {
-  margin: 6px 0 10px 18px;
+  margin: 6px 0 10px 24px;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+.md-list.md-list-ordered {
+  list-style-type: decimal;
+}
 .md-list li {
   line-height: 22px;
+  display: list-item;
+}
+.md-list .md-list {
+  margin: 4px 0 4px 18px;
+}
+.md-list-cont {
+  margin: 4px 0 4px 0;
 }
 
 /* Code block container */

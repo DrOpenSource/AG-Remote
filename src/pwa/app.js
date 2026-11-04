@@ -615,9 +615,20 @@
           if (visible) chatFeed.querySelector(`[data-msg-id="${dup.id}"]`)?.remove();
         }
       }
-      t.messages.push(event.message);
+      const existingIdx = t.messages.findIndex(m => m.id === event.message.id);
+      if (existingIdx >= 0) {
+        t.messages[existingIdx] = event.message;
+        if (visible) {
+          const existingBubble = chatFeed.querySelector(`[data-msg-id="${event.message.id}"]`);
+          if (existingBubble) {
+            existingBubble.replaceWith(buildChatMessageElement(event.message));
+          }
+        }
+      } else {
+        t.messages.push(event.message);
+        if (visible) appendChatMessage(event.message);
+      }
       t.lastActivity = Math.max(t.lastActivity || 0, Number(event.message.ts) || Date.now());
-      if (visible) appendChatMessage(event.message);
     } else if (event.type === 'approval_requested') {
       t.approval = event.approval;
       t.status = 'awaiting_approval';
@@ -799,6 +810,94 @@
     }
   }
 
+  const HTML_ENTITIES = {
+    // Arrows
+    rarr: '→', rightarrow: '→', larr: '←', leftarrow: '←',
+    uarr: '↑', uparrow: '↑', darr: '↓', downarrow: '↓',
+    harr: '↔', leftrightarrow: '↔',
+    rArr: '⇒', Rightarrow: '⇒', lArr: '⇐', Leftarrow: '⇐',
+    uArr: '⇑', Uparrow: '⇑', dArr: '⇓', Downarrow: '⇓',
+    hArr: '⇔', Leftrightarrow: '⇔',
+
+    // Comparisons and math
+    le: '≤', ge: '≥', ne: '≠', approx: '≈', times: '×', divide: '÷', plusmn: '±',
+    infin: '∞', middot: '·', deg: '°',
+
+    // Punctuation and typography
+    mdash: '—', ndash: '–', hellip: '…', bull: '•',
+    copy: '©', reg: '®', trade: '™', check: '✓', cross: '✗',
+
+    // XML/HTML characters
+    nbsp: ' ', quot: '"', apos: "'", rbrace: '}', lbrace: '{',
+    lt: '<', gt: '>', amp: '&'
+  };
+
+  const LATEX_SYMBOLS = [
+    [ /\$(?:\s*\\(?:rightarrow\b|to\b)\s*)\$|\\\(\s*\\(?:rightarrow\b|to\b)\s*\\\)|\b\\(?:rightarrow\b|to\b)|\\(?:rightarrow\b|to\b)/g, '→' ],
+    [ /\$(?:\s*\\(?:leftarrow\b|gets\b)\s*)\$|\\\(\s*\\(?:leftarrow\b|gets\b)\s*\\\)|\b\\(?:leftarrow\b|gets\b)|\\(?:leftarrow\b|gets\b)/g, '←' ],
+    [ /\$(?:\s*\\Rightarrow\b\s*)\$|\\\(\s*\\Rightarrow\b\s*\\\)|\b\\Rightarrow\b|\\Rightarrow\b/g, '⇒' ],
+    [ /\$(?:\s*\\Leftarrow\b\s*)\$|\\\(\s*\\Leftarrow\b\s*\\\)|\b\\Leftarrow\b|\\Leftarrow\b/g, '⇐' ],
+    [ /\$(?:\s*\\leftrightarrow\b\s*)\$|\\\(\s*\\leftrightarrow\b\s*\\\)|\b\\leftrightarrow\b|\\leftrightarrow\b/g, '↔' ],
+    [ /\$(?:\s*\\Leftrightarrow\b\s*)\$|\\\(\s*\\Leftrightarrow\b\s*\\\)|\b\\Leftrightarrow\b|\\Leftrightarrow\b/g, '⇔' ],
+    [ /\$(?:\s*\\uparrow\b\s*)\$|\\\(\s*\\uparrow\b\s*\\\)|\b\\uparrow\b|\\uparrow\b/g, '↑' ],
+    [ /\$(?:\s*\\downarrow\b\s*)\$|\\\(\s*\\downarrow\b\s*\\\)|\b\\downarrow\b|\\downarrow\b/g, '↓' ],
+    [ /\$(?:\s*\\(?:le\b|leq\b)\s*)\$|\\\(\s*\\(?:le\b|leq\b)\s*\\\)|\b\\(?:le\b|leq\b)/g, '≤' ],
+    [ /\$(?:\s*\\(?:ge\b|geq\b)\s*)\$|\\\(\s*\\(?:ge\b|geq\b)\s*\\\)|\b\\(?:ge\b|geq\b)/g, '≥' ],
+    [ /\$(?:\s*\\(?:ne\b|neq\b)\s*)\$|\\\(\s*\\(?:ne\b|neq\b)\s*\\\)|\b\\(?:ne\b|neq\b)/g, '≠' ],
+    [ /\$(?:\s*\\approx\b\s*)\$|\\\(\s*\\approx\b\s*\\\)|\b\\approx\b/g, '≈' ],
+    [ /\$(?:\s*\\pm\b\s*)\$|\\\(\s*\\pm\b\s*\\\)|\b\\pm\b/g, '±' ],
+    [ /\$(?:\s*\\times\b\s*)\$|\\\(\s*\\times\b\s*\\\)|\b\\times\b/g, '×' ],
+    [ /\$(?:\s*\\div\b\s*)\$|\\\(\s*\\div\b\s*\\\)|\b\\div\b/g, '÷' ],
+    [ /\$(?:\s*\\cdot\b\s*)\$|\\\(\s*\\cdot\b\s*\\\)|\b\\cdot\b/g, '·' ],
+    [ /\$(?:\s*\\(?:dots\b|cdots\b|ldots\b)\s*)\$|\\\(\s*\\(?:dots\b|cdots\b|ldots\b)\s*\\\)|\b\\(?:dots\b|cdots\b|ldots\b)/g, '…' ],
+    [ /\$(?:\s*\\infty\b\s*)\$|\\\(\s*\\infty\b\s*\\\)|\b\\infty\b/g, '∞' ],
+    [ /\$(?:\s*\\bullet\b\s*)\$|\\\(\s*\\bullet\b\s*\\\)|\b\\bullet\b/g, '•' ],
+  ];
+
+  function formatInlineText(s) {
+    if (!s) return '';
+
+    // 1. Double-escaped entities (&amp;rarr; -> &rarr;)
+    s = s.replace(/&amp;([a-zA-Z0-9#]+;)/g, '&$1');
+
+    // 2. HTML named entities
+    s = s.replace(/&([a-zA-Z0-9]+);/g, (match, name) => {
+      if (Object.prototype.hasOwnProperty.call(HTML_ENTITIES, name)) {
+        return HTML_ENTITIES[name];
+      }
+      return match;
+    });
+
+    // 3. Numeric decimal & hex entities
+    s = s.replace(/&#(\d+);/g, (_, dec) => {
+      try {
+        const code = Number(dec);
+        return (code > 0 && code <= 0x10ffff) ? String.fromCodePoint(code) : _;
+      } catch { return _; }
+    });
+    s = s.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      try {
+        const code = parseInt(hex, 16);
+        return (code > 0 && code <= 0x10ffff) ? String.fromCodePoint(code) : _;
+      } catch { return _; }
+    });
+
+    // 4. LaTeX inline math symbols
+    for (const [re, rep] of LATEX_SYMBOLS) {
+      s = s.replace(re, rep);
+    }
+
+    // 5. Common ASCII prose arrows (bounded by whitespace, brackets, parentheses or line edges)
+    s = s.replace(/(^|[\s(\[:])-->([\s)\]:.]|$)/g, '$1→$2');
+    s = s.replace(/(^|[\s(\[:])->([\s)\]:.]|$)/g, '$1→$2');
+    s = s.replace(/(^|[\s(\[:])==>([\s)\]:.]|$)/g, '$1⇒$2');
+    s = s.replace(/(^|[\s(\[:])<--([\s)\]:.]|$)/g, '$1←$2');
+    s = s.replace(/(^|[\s(\[:])<-([\s)\]:.]|$)/g, '$1←$2');
+    s = s.replace(/(^|[\s(\[:])<==([\s)\]:.]|$)/g, '$1⇐$2');
+
+    return s;
+  }
+
   // Safe inline tokenizer (DOM construction only, 0 innerHTML, immune to XSS)
   function renderInline(parentEl, text) {
     if (!text) return;
@@ -806,25 +905,25 @@
     let last = 0;
     for (const m of text.matchAll(INLINE_RE)) {
       if (m.index > last) {
-        parentEl.append(text.slice(last, m.index));
+        parentEl.append(formatInlineText(text.slice(last, m.index)));
       }
       if (m[1]) {
         const code = document.createElement('code');
         code.textContent = m[1].slice(1, -1);
         parentEl.appendChild(code);
       } else if (m[2]) {
-        parentEl.appendChild(linkNode(m[3], m[4]));
+        parentEl.appendChild(linkNode(formatInlineText(m[3]), m[4]));
       } else if (m[5]) {
         const strong = document.createElement('strong');
-        strong.textContent = m[6] || m[7];
+        strong.textContent = formatInlineText(m[6] || m[7]);
         parentEl.appendChild(strong);
       } else if (m[8]) {
         const del = document.createElement('del');
-        del.textContent = m[9];
+        del.textContent = formatInlineText(m[9]);
         parentEl.appendChild(del);
       } else if (m[10]) {
         const em = document.createElement('em');
-        em.textContent = m[11] || m[12];
+        em.textContent = formatInlineText(m[11] || m[12]);
         parentEl.appendChild(em);
       } else if (m[13]) {
         parentEl.appendChild(document.createElement('br'));
@@ -832,7 +931,7 @@
       last = m.index + m[0].length;
     }
     if (last < text.length) {
-      parentEl.append(text.slice(last));
+      parentEl.append(formatInlineText(text.slice(last)));
     }
   }
 
@@ -985,9 +1084,9 @@
       }
 
       // 3. Headings
-      const hMatch = line.match(/^(#{1,4})\s+(.+)$/);
+      const hMatch = line.match(/^(#{1,6})\s+(.+)$/);
       if (hMatch) {
-        const level = Math.min(hMatch[1].length + 2, 5);
+        const level = Math.min(Math.max(hMatch[1].length, 2), 6);
         const h = document.createElement('h' + level);
         h.className = 'md-h md-h' + level;
         renderInline(h, hMatch[2]);
@@ -1051,7 +1150,7 @@
         if (cur.startsWith('```')) break;
         if (/^(-{3,}|\*{3,}|_{3,})$/.test(cur.trim())) break;
         if (cur.trim().startsWith('|') && i + 1 < lines.length && /^\|\s*[-:]+/.test(lines[i + 1].trim())) break;
-        if (cur.match(/^(#{1,4})\s+/)) break;
+        if (cur.match(/^(#{1,6})\s+/)) break;
         if (cur.startsWith('>')) break;
         if (/^[\*\-]\s+/.test(cur)) break;
         if (/^\d+\.\s+/.test(cur)) break;
@@ -1069,10 +1168,7 @@
     }
   }
 
-  function appendChatMessage(msg, shouldScroll = true) {
-    if (!msg || (!msg.text && !msg.images?.length)) return;
-    emptyState.classList.add('hidden');
-
+  function buildChatMessageElement(msg) {
     const bubble = document.createElement('div');
     bubble.className = `chat-message ${msg.role === 'user' ? 'user' : 'agent'}`;
     bubble.dataset.msgId = msg.id;
@@ -1114,6 +1210,14 @@
       actions.appendChild(copyMsgBtn);
       bubble.appendChild(actions);
     }
+    return bubble;
+  }
+
+  function appendChatMessage(msg, shouldScroll = true) {
+    if (!msg || (!msg.text && !msg.images?.length)) return;
+    emptyState.classList.add('hidden');
+
+    const bubble = buildChatMessageElement(msg);
     chatFeed.appendChild(bubble);
 
     if (shouldScroll) scrollToBottom();
@@ -1218,7 +1322,7 @@
       if (approvalCwd) approvalCwd.classList.add('hidden');
       if (approvalIdeOnly) approvalIdeOnly.classList.add('hidden');
       if (approvalBadge) approvalBadge.textContent = 'The agent has a question';
-      approvalDesc.textContent = approval.question || approval.description || 'Please select an option:';
+      approvalDesc.textContent = formatInlineText(approval.question || approval.description || 'Please select an option:');
       approvalDetail.classList.add('hidden');
       approvalActions.classList.add('hidden');
       approvalOptions.classList.remove('hidden');
@@ -1233,7 +1337,7 @@
         item.className = 'option-item';
         item.innerHTML = `
           <span class="option-radio-dot"></span>
-          <span class="option-text">${escapeHtml(optText)}</span>
+          <span class="option-text">${escapeHtml(formatInlineText(optText))}</span>
         `;
         item.addEventListener('click', () => {
           if (approval.isMultiSelect) {
@@ -1252,7 +1356,8 @@
             selectedOptions.add(optText);
             item.classList.add('selected');
             btnSubmitChoice.disabled = false;
-            const preview = optText.length > 25 ? optText.slice(0, 25) + '...' : optText;
+            const optFormatted = formatInlineText(optText);
+            const preview = optFormatted.length > 25 ? optFormatted.slice(0, 25) + '...' : optFormatted;
             btnSubmitChoice.textContent = `Submit: "${preview}"`;
           }
         });
@@ -1304,7 +1409,7 @@
     } else {
       // Standard tool confirmation (e.g. run_command, write_to_file)
       if (approvalBadge) approvalBadge.textContent = 'Permission needed';
-      approvalDesc.textContent = approval.description || 'Pending confirmation';
+      approvalDesc.textContent = formatInlineText(approval.description || 'Pending confirmation');
       approvalDetail.textContent = approval.detail || JSON.stringify(approval, null, 2);
       approvalDetail.classList.remove('hidden');
       approvalOptions.classList.add('hidden');
@@ -1788,6 +1893,25 @@
     }
   });
 
+  promptInput.addEventListener('focus', () => {
+    setTimeout(() => {
+      updateViewport();
+      scrollToBottom();
+    }, 150);
+  });
+
+  promptInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      updateViewport();
+    }, 50);
+  });
+
+  chatFeed.addEventListener('touchstart', () => {
+    if (document.activeElement === promptInput) {
+      promptInput.blur();
+    }
+  }, { passive: true });
+
   // Auto-format 6-digit PIN or 6-char code with space after 3 chars (e.g. 849 201 or K7A 9P2)
   tokenInput.addEventListener('input', () => {
     const val = tokenInput.value;
@@ -2227,6 +2351,31 @@
   if (themeBtnLight) themeBtnLight.addEventListener('click', () => applyTheme('light'));
   if (themeBtnDark) themeBtnDark.addEventListener('click', () => applyTheme('dark'));
   initTheme();
+
+  // Viewport tracking & mobile virtual keyboard stabilization
+  function updateViewport() {
+    const vv = window.visualViewport;
+    const height = vv ? Math.round(vv.height) : window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', height + 'px');
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      window.scrollTo(0, 0);
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateViewport);
+    window.visualViewport.addEventListener('scroll', updateViewport);
+  }
+  window.addEventListener('resize', updateViewport);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(updateViewport, 100);
+  });
+  window.addEventListener('scroll', () => {
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      window.scrollTo(0, 0);
+    }
+  }, { passive: true });
+  updateViewport();
 
   // Initialize
   initAuth();

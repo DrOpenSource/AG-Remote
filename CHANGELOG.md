@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1: Full long response recovery, math formatting, and mobile viewport stabilization
+
+> **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.
+
+- **Full response recovery for long agent turns.** Resolved an issue where agent turns exceeding ~4 KB had their middle sections replaced with `<truncated ...>` in the phone view. The extension now detects Antigravity truncated fields and resolves complete content on-demand from `transcript_full.jsonl` with fast-path index matching and LRU caching.
+- **LaTeX, math, and typography formatting.** Rendered HTML entities (`&rarr;`, `&le;`, `&ge;`, `&approx;`, `&times;`, etc.) and LaTeX math arrows (`$\rightarrow$`, `$\to$`, `\rightarrow`) into clean Unicode characters in chat bubbles, approval questions, and interactive option choices.
+- **Mobile input box & viewport stabilization.** Pinned the root viewport and added `window.visualViewport` tracking with strict flex shrinking (`min-height: 0`), preventing the mobile input box from sliding down below the viewport when virtual keyboards dismiss or during scroll gestures.
+- **In-place live bubble updates.** Updated snapshots replace matching message elements in-place without scroll jumps, feed flickering, or duplicate bubbles.
+
 ## 0.3.0: Voice input, any file attachment, and quick-reconnect controls
 
 > **After installing this update, quit Antigravity completely** (File → Exit) and open it again. The phone app updates itself the next time you open it.

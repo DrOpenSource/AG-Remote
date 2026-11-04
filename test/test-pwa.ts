@@ -80,6 +80,7 @@ async function runTests() {
   assert(jsRes.body.includes('formatFileSize'), 'app.js contains file attachment size formatting');
   assert(jsRes.body.includes('splitTableCells'), 'app.js contains robust GFM table parsing with alignment support');
   assert(jsRes.body.includes('md-hr'), 'app.js contains horizontal rule rendering');
+  assert(jsRes.body.includes('formatInlineText') || jsRes.body.includes('HTML_ENTITIES'), 'app.js contains entity, LaTeX and arrow text formatting');
 
   // 4. GET /manifest.json
   const manifestRes = await fetchUrl('/manifest.json');

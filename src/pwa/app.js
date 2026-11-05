@@ -197,7 +197,7 @@
     };
     updateStatus('disconnected', labels[state] || 'Offline');
     if (state === 'waiting-host') sessionLabel.textContent = 'Open Antigravity on your PC';
-    if (state === 'room-full') showToast('Your PC already has 4 phones connected. Close AG-Remote on another phone and reload.');
+    if (state === 'room-full') showToast('Your PC has too many phone connections open. Close extra tabs or phones and reload.');
   }
 
   /** Relay pairing happens only by scanning a QR code, so the dialog explains that instead of asking for a PIN. */

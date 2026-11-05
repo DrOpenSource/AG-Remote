@@ -36,6 +36,7 @@ const CLOSE_REPLACED = 4001; // relay/src/room.ts: another window became host
 const DONE_DELAY_MS = 3000;
 const PING_MS = 30_000;
 const MAX_BACKOFF_MS = 30_000;
+const CONNECT_TIMEOUT_MS = 10_000;
 
 /**
  * The extension's side of the hosted relay. Dials the relay outbound, so it works from any network,
@@ -53,6 +54,7 @@ export class RelayHost {
   private backoff = 1000;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
+  private connectTimer: NodeJS.Timeout | null = null;
   /** Phones that said their app is on screen; they get no push, they already see it. Stored with last-seen timestamp to expire stale visibility. */
   private visiblePeers = new Map<string, number>();
   /** Last status per IDE window ('' without multi-window), to spot a task finishing. */
@@ -173,6 +175,7 @@ export class RelayHost {
 
   private connect(): void {
     if (this.stopped) return;
+    this.clearTimers();
     const Impl = this.opts.WebSocketImpl || globalThis.WebSocket;
     const url = `${this.opts.relayUrl.replace(/^http/, 'ws')}/ws/${this.opts.store.room}?role=host`;
     this.setStatus('connecting');
@@ -184,8 +187,20 @@ export class RelayHost {
       return;
     }
     this.ws = ws;
+    this.connectTimer = setTimeout(() => {
+      if (this.ws === ws && ws.readyState === 0) {
+        try { ws.close(); } catch (_) {}
+        this.ws = null;
+        this.clearTimers();
+        this.scheduleReconnect();
+      }
+    }, CONNECT_TIMEOUT_MS);
     const e2e = this.e2e;
     ws.addEventListener('open', () => {
+      if (this.connectTimer) {
+        clearTimeout(this.connectTimer);
+        this.connectTimer = null;
+      }
       if (this.ws !== ws) return;
       this.backoff = 1000;
       this.setStatus('online');
@@ -197,6 +212,10 @@ export class RelayHost {
       if (this.ws === ws && typeof e.data === 'string') e2e.handleRelay(e.data).catch(() => {});
     });
     ws.addEventListener('close', (e: CloseEvent) => {
+      if (this.connectTimer) {
+        clearTimeout(this.connectTimer);
+        this.connectTimer = null;
+      }
       if (this.ws !== ws) return;
       this.ws = null;
       this.clearTimers();
@@ -208,7 +227,18 @@ export class RelayHost {
       }
       this.scheduleReconnect();
     });
-    ws.addEventListener('error', () => {});
+    ws.addEventListener('error', () => {
+      if (this.connectTimer) {
+        clearTimeout(this.connectTimer);
+        this.connectTimer = null;
+      }
+      if (this.ws === ws && ws.readyState === 0) {
+        try { ws.close(); } catch (_) {}
+        this.ws = null;
+        this.clearTimers();
+        this.scheduleReconnect();
+      }
+    });
   }
 
   private scheduleReconnect(): void {
@@ -223,8 +253,10 @@ export class RelayHost {
   }
 
   private clearTimers(): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.connectTimer = null;
     this.pingTimer = null;
     this.reconnectTimer = null;
   }

@@ -24,6 +24,7 @@ type Role = 'host' | 'phone';
 interface SocketInfo {
   role: Role;
   id: string;
+  clientId?: string;
   windowStart: number;
   count: number;
 }
@@ -50,8 +51,19 @@ export class Room extends DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const role = new URL(request.url).searchParams.get('role') as Role;
+    const url = new URL(request.url);
+    const role = url.searchParams.get('role') as Role;
+    const clientId = url.searchParams.get('client') || undefined;
     const [client, server] = Object.values(new WebSocketPair());
+
+    if (role === 'phone' && clientId) {
+      for (const old of this.ctx.getWebSockets('phone')) {
+        const peer = old.deserializeAttachment() as SocketInfo | null;
+        if (peer?.clientId === clientId) {
+          old.close(CLOSE_REPLACED, 'replaced by new connection from same client');
+        }
+      }
+    }
 
     if (role === 'phone' && this.ctx.getWebSockets('phone').length >= MAX_PHONES) {
       // Accept then close, so the phone gets a readable close code instead of a failed handshake.
@@ -66,7 +78,7 @@ export class Room extends DurableObject {
       }
     }
 
-    const info: SocketInfo = { role, id: crypto.randomUUID(), windowStart: Date.now(), count: 0 };
+    const info: SocketInfo = { role, id: crypto.randomUUID(), clientId, windowStart: Date.now(), count: 0 };
     this.ctx.acceptWebSocket(server, [role]);
     server.serializeAttachment(info);
 

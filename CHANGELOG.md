@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2: Persistent device identity, relay socket deduplication, and connection hang recovery
+
+> **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.
+
+- **Persistent phone device identity.** Phones now store and reuse a stable cryptographic identity in IndexedDB across pairings. Reconnecting or re-pairing the same phone now updates its existing registration on your PC rather than creating duplicate device entries.
+- **Relay phone socket deduplication.** The relay room now recognizes client identifiers and evicts stale/orphaned WebSockets when a phone reconnects, eliminating ghost sockets from page reloads and preventing false "Your PC already has 4 phones connected" errors.
+- **RelayHost connection timeout and error recovery.** Added a 10-second connection timeout and socket error handler to the extension host's relay client, preventing the PC from getting permanently stuck in `connecting` ("PC offline") after system sleep or network switches.
+
 ## 0.3.1: Full long response recovery, math formatting, and mobile viewport stabilization
 
 > **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.

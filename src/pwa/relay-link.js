@@ -47,6 +47,39 @@ const loadPairing = (room) => dbOp('readonly', (s) => s.get(room));
 const savePairing = (room, value) => dbOp('readwrite', (s) => s.put(value, room));
 const deletePairing = (room) => dbOp('readwrite', (s) => s.delete(room));
 
+/**
+ * Reuses a long-term device identity stored in IndexedDB so re-pairing or reconnecting
+ * from the same device updates the existing registration on the host instead of creating
+ * duplicate phantom devices.
+ */
+export async function getOrCreateDeviceIdentity() {
+  try {
+    const existing = await dbOp('readonly', (s) => s.get('__device_identity__'));
+    if (existing && existing.pub && existing.key && existing.publicKey) {
+      return existing;
+    }
+  } catch (_) {}
+  const identity = await generateIdentity();
+  try {
+    await dbOp('readwrite', (s) => s.put(identity, '__device_identity__'));
+  } catch (_) {}
+  return identity;
+}
+
+function getClientId() {
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    let id = localStorage.getItem('ag_client_id');
+    if (!id) {
+      id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('ag_client_id', id);
+    }
+    return id;
+  } catch (_) {
+    return '';
+  }
+}
+
 function deviceName() {
   const ua = navigator.userAgent || '';
   if (/iPhone/.test(ua)) return 'iPhone';
@@ -211,7 +244,9 @@ export class RelayLink {
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/${this.room}?role=phone`);
+    const cid = getClientId();
+    const qClient = cid ? `&client=${encodeURIComponent(cid)}` : '';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/${this.room}?role=phone${qClient}`);
     this.ws = ws;
     this.connectStartedAt = Date.now();
     this.hostPresent = false;
@@ -241,6 +276,10 @@ export class RelayLink {
       if (this.ws !== ws) return;
       clearInterval(this.pingTimer);
       this.ws = null;
+      if (e.code === 4001) {
+        // Replaced by another active connection from this device.
+        return;
+      }
       if (e.code === CLOSE_ROOM_FULL) {
         this.setState('room-full');
         return;
@@ -290,7 +329,7 @@ export class RelayLink {
           return;
         }
         this.setState('pairing');
-        const identity = await generateIdentity();
+        const identity = await getOrCreateDeviceIdentity();
         this.checkCode = await checkCode(identity.pub);
         this.e2e = this.makeE2E(identity, null);
         const secret = this.secret;

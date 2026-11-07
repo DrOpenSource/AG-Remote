@@ -225,6 +225,18 @@ export function rankLanguageServers<T extends Pick<LsServer, 'ppid' | 'attached'
   return procs.map((p, i) => ({ p, i })).sort((a, b) => score(b.p) - score(a.p) || a.i - b.i).map(x => x.p);
 }
 
+/**
+ * Loopback TCP listening ports for a Windows process from `netstat.exe -ano -p TCP` output.
+ * Matches exact PID column to avoid suffix collisions (e.g. pid 234 matching 1234). Pure; exported for tests.
+ */
+export function parseWindowsNetstatPorts(netstat: string, pid: number): number[] {
+  const pidStr = String(pid);
+  return netstat.split(/\r?\n/)
+    .filter(l => /LISTENING/.test(l) && /127\.0\.0\.1:/.test(l) && l.trim().split(/\s+/).pop() === pidStr)
+    .map(l => Number((/127\.0\.0\.1:(\d+)/.exec(l) || [])[1]))
+    .filter(Boolean);
+}
+
 /** Default discovery on Windows: agent-server processes and their loopback listening ports. */
 export const discoverWindowsLanguageServers: Discover = async () => {
   const run = (cmd: string, args: string[]) => new Promise<string>(res =>
@@ -238,10 +250,7 @@ export const discoverWindowsLanguageServers: Discover = async () => {
   for (const p of procs) {
     const parsed = parseServerCommandLine(String(p?.CommandLine || ''));
     if (!parsed) continue;
-    const ports = netstat.split(/\r?\n/)
-      .filter(l => /LISTENING/.test(l) && l.trim().endsWith(String(p.ProcessId)) && /127\.0\.0\.1:/.test(l))
-      .map(l => Number((/127\.0\.0\.1:(\d+)/.exec(l) || [])[1]))
-      .filter(Boolean);
+    const ports = parseWindowsNetstatPorts(netstat, Number(p.ProcessId));
     if (ports.length > 0) servers.push({ pid: Number(p.ProcessId), ppid: Number(p.ParentProcessId), ports, ...parsed });
   }
   return servers;

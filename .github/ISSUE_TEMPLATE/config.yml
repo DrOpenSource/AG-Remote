@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Reporting
+    url: https://github.com/DrOpenSource/AG-Remote/security/advisories/new
+    about: Please report security vulnerabilities privately via GitHub Security Advisories or by emailing imkashyaps@gmail.com.
+  - name: Ask a Question or Discuss Ideas
+    url: https://github.com/DrOpenSource/AG-Remote/discussions
+    about: Join the community to ask questions, share setups, or discuss ideas.
+

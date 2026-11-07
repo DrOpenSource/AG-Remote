@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3: Multi-PC host switcher, full-size image preview modal, and host recovery
+
+> **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.
+
+- **Multi-PC Host Switcher Drop-down.** Switch between distinct physical host machines directly inside the standalone PWA UI. The top app bar features an elevated host selector pill and dropdown, complete with hostname auto-detection, custom renaming, one-click host switching, machine unpairing, and a "+ Pair Another PC" action.
+- **Full-Size Image Preview (Lightbox Modal).** Tap any attached image thumbnail in the prompt tray or any sent image in the chat stream to open a full-resolution lightbox modal with dimensions, filename, file size, and tap-outside / Escape dismissal.
+- **Host Auto-Identification.** Extension `/api/windows` and `/api/state` endpoints now detect and report the physical machine's hostname (`os.hostname()`), allowing phones to automatically identify paired workstations.
+- **Extension Self-Healing Recovery.** If the host extension window terminates or drops, clicking the status bar QR item automatically claims host duties and restores the pairing server instead of opening a broken browser tab.
+- **Netstat PID Suffix Collision Hardening.** Exact regex matching prevents false-positive PID collisions (e.g. PID `1234` matching `50234`) on Windows during agent port discovery.
+- **Optimized Marketplace Asset Footprint.** Standardized marketplace icon to 128x128 pixels, reducing the packaged VSIX footprint from ~150 KB to ~138 KB (saving over 12 KB).
+
 ## 0.3.2: Persistent device identity, relay socket deduplication, and connection hang recovery
 
 > **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.

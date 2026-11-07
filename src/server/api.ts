@@ -104,10 +104,14 @@ export async function handlePhoneApi(
   // POST /api/sessions/select (Switch active target session from phone)
   if (method === 'POST' && pathname === '/api/sessions/select') {
     if (!body || typeof body.id !== 'string') return bad('Body must contain "id" string');
-    if (!(await sm.setActiveSession(body.id, windowIdOf(body)))) {
-      return { status: 404, body: { error: 'Session not found or cannot be activated' } };
+    try {
+      if (!(await sm.setActiveSession(body.id, windowIdOf(body)))) {
+        return { status: 404, body: { error: 'Session not found or cannot be activated' } };
+      }
+      return { status: 200, body: { status: 'switched', snapshot: await sm.getSnapshot(windowIdOf(body)) } };
+    } catch (err: any) {
+      return bad(err.message);
     }
-    return { status: 200, body: { status: 'switched', snapshot: await sm.getSnapshot(windowIdOf(body)) } };
   }
 
   // POST /api/prompt
@@ -119,8 +123,12 @@ export async function handlePhoneApi(
     if (!body || typeof body.text !== 'string' || (body.text.trim().length === 0 && images.length === 0 && files.length === 0)) {
       return bad('Body must contain non-empty "text" field or attachments');
     }
-    await sm.sendPrompt(body.text, windowIdOf(body), images, files);
-    return { status: 200, body: { status: 'sent' } };
+    try {
+      await sm.sendPrompt(body.text, windowIdOf(body), images, files);
+      return { status: 200, body: { status: 'sent' } };
+    } catch (err: any) {
+      return bad(err.message);
+    }
   }
 
   // POST /api/approve

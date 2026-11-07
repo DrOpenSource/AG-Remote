@@ -43,6 +43,21 @@
   const toastBanner = document.getElementById('toastBanner');
   const toastMessage = document.getElementById('toastMessage');
   const toastClose = document.getElementById('toastClose');
+  const btnHostSelector = document.getElementById('btnHostSelector');
+  const currentHostName = document.getElementById('currentHostName');
+  const hostDropdown = document.getElementById('hostDropdown');
+  const hostDropdownList = document.getElementById('hostDropdownList');
+  const btnAddHostFromDropdown = document.getElementById('btnAddHostFromDropdown');
+  const btnAddHostFromDrawer = document.getElementById('btnAddHostFromDrawer');
+  const drawerHostsList = document.getElementById('drawerHostsList');
+  const drawerHostsSection = document.getElementById('drawerHostsSection');
+
+  const imageModal = document.getElementById('imageModal');
+  const imageModalImg = document.getElementById('imageModalImg');
+  const imageModalTitle = document.getElementById('imageModalTitle');
+  const imageModalSubtitle = document.getElementById('imageModalSubtitle');
+  const btnImageModalClose = document.getElementById('btnImageModalClose');
+
   const pairingModal = document.getElementById('pairingModal');
   const tokenInput = document.getElementById('tokenInput');
   const btnSaveToken = document.getElementById('btnSaveToken');
@@ -61,7 +76,8 @@
   let relayRoom = (() => {
     const m = window.location.pathname.match(/^\/p\/([A-Za-z0-9_-]{22})\/?$/);
     if (m) return m[1];
-    if (window.location.protocol !== 'https:') return null;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('token') || params.has('t')) return null;
     try { return localStorage.getItem(RELAY_ROOM_KEY); } catch (_) { return null; }
   })();
   let relayMode = !!relayRoom;
@@ -89,8 +105,288 @@
     return { ok: res.ok, status: res.status, data };
   }
 
+  // Multi-PC Host Management
+  const HOSTS_STORAGE_KEY = 'ag_remote_hosts';
+
+  function getStoredHosts() {
+    try {
+      const raw = localStorage.getItem(HOSTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveStoredHosts(hosts) {
+    try {
+      localStorage.setItem(HOSTS_STORAGE_KEY, JSON.stringify(hosts));
+    } catch (_) {}
+    renderHostSelector();
+  }
+
+  async function syncKnownHosts() {
+    let hosts = getStoredHosts();
+    if (relayMode) {
+      try {
+        const { listStoredRooms } = await import('/relay-link.js');
+        const dbRooms = await listStoredRooms();
+        for (const room of dbRooms) {
+          if (!hosts.some(h => h.room === room)) {
+            hosts.push({
+              room,
+              name: `PC (${room.slice(0, 6)})`,
+              hostName: '',
+              lastSeen: 0
+            });
+          }
+        }
+      } catch (_) {}
+
+      if (relayRoom && !hosts.some(h => h.room === relayRoom)) {
+        hosts.unshift({
+          room: relayRoom,
+          name: `PC (${relayRoom.slice(0, 6)})`,
+          hostName: '',
+          lastSeen: Date.now()
+        });
+      }
+    }
+    saveStoredHosts(hosts);
+  }
+
+  function updateHostName(detectedHostName) {
+    if (!detectedHostName) return;
+    let hosts = getStoredHosts();
+    let current = hosts.find(h => h.room === relayRoom);
+    if (!current && relayRoom) {
+      current = { room: relayRoom, name: detectedHostName, hostName: detectedHostName, lastSeen: Date.now() };
+      hosts.unshift(current);
+    } else if (current) {
+      current.hostName = detectedHostName;
+      if (!current.customName) {
+        current.name = detectedHostName;
+      }
+      current.lastSeen = Date.now();
+    }
+    saveStoredHosts(hosts);
+  }
+
+  async function switchHost(newRoom) {
+    if (!newRoom || newRoom === relayRoom) {
+      closeHostDropdown();
+      return;
+    }
+    closeHostDropdown();
+    const drawerBackdrop = document.getElementById('drawerBackdrop');
+    if (drawerBackdrop) drawerBackdrop.classList.add('hidden');
+
+    if (relay && typeof relay.stop === 'function') {
+      relay.stop();
+    }
+    relay = null;
+
+    relayRoom = newRoom;
+    relayMode = true;
+    try { localStorage.setItem(RELAY_ROOM_KEY, newRoom); } catch (_) {}
+    window.history.replaceState(null, document.title, `/p/${newRoom}`);
+
+    tabs.clear();
+    activeTabId = '';
+    chatFeed.replaceChildren(emptyState);
+    renderTabBar();
+    updateStatus('disconnected', 'Connecting...');
+    sessionLabel.textContent = 'Connecting...';
+
+    await startRelay();
+    renderHostSelector();
+  }
+
+  async function forgetHost(roomToForget) {
+    if (!confirm('Forget this PC? You will need to scan its QR code again to reconnect.')) return;
+    try {
+      const { deleteStoredPairing } = await import('/relay-link.js');
+      await deleteStoredPairing(roomToForget);
+    } catch (_) {}
+
+    let hosts = getStoredHosts().filter(h => h.room !== roomToForget);
+    saveStoredHosts(hosts);
+
+    if (relayRoom === roomToForget) {
+      if (hosts.length > 0) {
+        switchHost(hosts[0].room);
+      } else {
+        localStorage.removeItem(RELAY_ROOM_KEY);
+        relayRoom = null;
+        relayMode = false;
+        if (relay && typeof relay.stop === 'function') relay.stop();
+        relay = null;
+        updateStatus('disconnected', 'Not paired');
+        showRelayPairing();
+      }
+    }
+  }
+
+  function renameHost(roomToRename, currentName) {
+    const newName = prompt('Rename PC:', currentName);
+    if (newName === null || !newName.trim()) return;
+    let hosts = getStoredHosts();
+    const h = hosts.find(x => x.room === roomToRename);
+    if (h) {
+      h.name = newName.trim();
+      h.customName = true;
+      saveStoredHosts(hosts);
+    }
+  }
+
+  function toggleHostDropdown() {
+    if (!hostDropdown) return;
+    const isHidden = hostDropdown.classList.contains('hidden');
+    if (isHidden) {
+      renderHostDropdown();
+      hostDropdown.classList.remove('hidden');
+      btnHostSelector?.setAttribute('aria-expanded', 'true');
+    } else {
+      closeHostDropdown();
+    }
+  }
+
+  function closeHostDropdown() {
+    if (!hostDropdown) return;
+    hostDropdown.classList.add('hidden');
+    btnHostSelector?.setAttribute('aria-expanded', 'false');
+  }
+
+  function renderHostSelector() {
+    if (!btnHostSelector) return;
+    const hosts = getStoredHosts();
+    if (!relayMode && hosts.length === 0) {
+      btnHostSelector.classList.add('hidden');
+      if (drawerHostsSection) drawerHostsSection.classList.add('hidden');
+      return;
+    }
+    btnHostSelector.classList.remove('hidden');
+    if (drawerHostsSection) drawerHostsSection.classList.remove('hidden');
+
+    const activeRoom = relayRoom || (hosts[0] ? hosts[0].room : null);
+    const current = hosts.find(h => h.room === activeRoom);
+    const displayName = current ? current.name : (activeRoom ? `PC (${activeRoom.slice(0, 6)})` : 'Host PC');
+    if (currentHostName) currentHostName.textContent = displayName;
+
+    renderDrawerHosts(hosts);
+  }
+
+  function renderHostDropdown() {
+    if (!hostDropdownList) return;
+    hostDropdownList.innerHTML = '';
+    const hosts = getStoredHosts();
+    if (hosts.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'host-dropdown-item';
+      empty.textContent = 'No paired PCs found';
+      hostDropdownList.appendChild(empty);
+      return;
+    }
+    const activeRoom = relayRoom || (hosts[0] ? hosts[0].room : null);
+    hosts.forEach(h => {
+      const isCurrent = h.room === activeRoom;
+      const item = document.createElement('div');
+      item.className = 'host-dropdown-item' + (isCurrent ? ' active' : '');
+
+      const left = document.createElement('div');
+      left.className = 'host-dropdown-item-left';
+      left.addEventListener('click', () => switchHost(h.room));
+
+      const icon = document.createElement('span');
+      icon.className = 'host-item-icon';
+      icon.textContent = isCurrent ? '🟢' : '💻';
+
+      const details = document.createElement('div');
+      details.className = 'host-item-details';
+
+      const name = document.createElement('span');
+      name.className = 'host-item-name';
+      name.textContent = h.name || `PC (${h.room.slice(0, 6)})`;
+
+      const sub = document.createElement('span');
+      sub.className = 'host-item-sub';
+      sub.textContent = isCurrent ? 'Active PC' : (h.lastSeen ? `Seen ${formatTimeAgo(h.lastSeen)}` : 'Paired');
+
+      details.append(name, sub);
+      left.append(icon, details);
+
+      const actions = document.createElement('div');
+      actions.className = 'host-dropdown-item-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-host-action';
+      editBtn.title = 'Rename PC';
+      editBtn.textContent = '✏️';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        renameHost(h.room, h.name);
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn-host-action';
+      delBtn.title = 'Forget PC';
+      delBtn.textContent = '🗑️';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        forgetHost(h.room);
+      });
+
+      actions.append(editBtn, delBtn);
+      item.append(left, actions);
+      hostDropdownList.appendChild(item);
+    });
+  }
+
+  function renderDrawerHosts(hosts) {
+    if (!drawerHostsList) return;
+    drawerHostsList.innerHTML = '';
+    const activeRoom = relayRoom || (hosts[0] ? hosts[0].room : null);
+    hosts.forEach(h => {
+      const isCurrent = h.room === activeRoom;
+      const item = document.createElement('div');
+      item.className = 'drawer-item' + (isCurrent ? ' active' : '');
+      item.innerHTML = `<span class="drawer-item-icon">${isCurrent ? '🟢' : '💻'}</span><span class="drawer-item-title">${escapeHtml(h.name || 'PC')}</span>`;
+      item.addEventListener('click', () => switchHost(h.room));
+      drawerHostsList.appendChild(item);
+    });
+  }
+
+  if (btnHostSelector) {
+    btnHostSelector.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleHostDropdown();
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (hostDropdown && !hostDropdown.classList.contains('hidden')) {
+      if (!hostDropdown.contains(e.target) && !btnHostSelector?.contains(e.target)) {
+        closeHostDropdown();
+      }
+    }
+  });
+
+  const onAddHost = () => {
+    closeHostDropdown();
+    const drawerBackdrop = document.getElementById('drawerBackdrop');
+    if (drawerBackdrop) drawerBackdrop.classList.add('hidden');
+    showRelayPairing();
+  };
+
+  if (btnAddHostFromDropdown) btnAddHostFromDropdown.addEventListener('click', onAddHost);
+  if (btnAddHostFromDrawer) btnAddHostFromDrawer.addEventListener('click', onAddHost);
+
   // 1. Token Initialization & Pairing Exchange
   async function initAuth() {
+    await syncKnownHosts();
+    renderHostSelector();
     if (relayMode) {
       startRelay();
       return;
@@ -158,6 +454,8 @@
     // Keep the one-time secret out of history and bookmarks.
     window.history.replaceState(null, document.title, `/p/${relayRoom}`);
     updateStatus('disconnected', 'Connecting...');
+    await syncKnownHosts();
+    renderHostSelector();
     const { RelayLink } = await import('/relay-link.js');
     relay = new RelayLink({
       room: relayRoom,
@@ -411,6 +709,7 @@
     t.messages = Array.isArray(snap.messages) ? snap.messages : [];
     t.approval = snap.pendingApproval || null;
     t.lastActivity = Number(snap.lastActivity) || 0;
+    if (snap.hostName) updateHostName(snap.hostName);
   }
 
   // One resync at a time. Waking fires several events and the relay coming back adds another;
@@ -452,6 +751,7 @@
         const winData = winRes.data;
         windows = winData.windows || [];
         selectedId = winData.selectedId;
+        if (winData.hostName) updateHostName(winData.hostName);
       }
       syncTabs(windows, selectedId);
       if (tabs.size === 0) tabFor('');
@@ -1255,6 +1555,10 @@
         const img = document.createElement('img');
         img.src = src;
         img.alt = 'Attached image';
+        img.title = 'Click to preview full size';
+        img.addEventListener('click', () => {
+          openImagePreview(src, 'Attached Image', '');
+        });
         thumbs.appendChild(img);
       }
       bubble.appendChild(thumbs);
@@ -1622,6 +1926,37 @@
     }
   }
 
+  // Full-Size Image Preview (Lightbox Modal)
+  function openImagePreview(src, title, subtitle) {
+    if (!imageModal || !imageModalImg) return;
+    imageModalImg.src = src;
+    if (imageModalTitle) imageModalTitle.textContent = title || 'Attachment Preview';
+    if (imageModalSubtitle) imageModalSubtitle.textContent = subtitle || '';
+    imageModal.classList.remove('hidden');
+  }
+
+  function closeImagePreview() {
+    if (!imageModal) return;
+    imageModal.classList.add('hidden');
+    if (imageModalImg) imageModalImg.src = '';
+  }
+
+  if (btnImageModalClose) {
+    btnImageModalClose.addEventListener('click', closeImagePreview);
+  }
+  if (imageModal) {
+    imageModal.addEventListener('click', (e) => {
+      if (e.target === imageModal || e.target.classList.contains('image-modal-body')) {
+        closeImagePreview();
+      }
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && imageModal && !imageModal.classList.contains('hidden')) {
+      closeImagePreview();
+    }
+  });
+
   function renderAttachTray() {
     attachTray.innerHTML = '';
     attachTray.classList.toggle('hidden', attachments.length === 0);
@@ -1659,6 +1994,10 @@
         const img = document.createElement('img');
         img.src = a.src;
         img.alt = `Attachment ${i + 1}`;
+        img.title = 'Click to preview full size';
+        img.addEventListener('click', () => {
+          openImagePreview(a.src, a.name || `Attachment ${i + 1}`, formatFileSize(a.size || 0));
+        });
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'attach-remove';
@@ -2315,6 +2654,7 @@
   });
 
   async function renderDrawer() {
+    renderDrawerHosts(getStoredHosts());
     if (!drawerWindowsList || !drawerHistoryList) return;
     drawerWindowsList.innerHTML = '<div class="drawer-item">Loading windows...</div>';
     drawerHistoryList.innerHTML = '<div class="drawer-item">Loading conversations...</div>';

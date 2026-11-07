@@ -155,13 +155,29 @@ export async function activate(context: vscodeTypes.ExtensionContext): Promise<v
       }
       if (relayOn) {
         // The relay connection lives in the host window; ask it (over loopback) for a QR.
-        const res = await postHubJson(port, '/api/hub/relay-pair', {});
+        let res = await postHubJson(port, '/api/hub/relay-pair', {});
+        if (!res && !isHost) {
+          if (await becomeHost()) {
+            const relayPair = relayHost ? await relayHost.createPairingUrl() : undefined;
+            showPairingPanel(vscode, {
+              relayPairUrl: typeof relayPair === 'string' ? relayPair : relayPair?.url,
+              relayCode: typeof relayPair === 'object' ? relayPair?.code : undefined,
+              wifi: wifiOn ? pairingManager?.createPairingSession() : undefined,
+              paired: relayHost ? relayHost.pairedPhones() : []
+            });
+            return;
+          }
+        }
         if (res?.url) {
           showPairingPanel(vscode, { relayPairUrl: res.url, relayCode: res.code, paired });
           return;
         }
       }
-      vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
+      if (wifiOn) {
+        vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${port}/pair/view`));
+      } else {
+        vscode.window.showWarningMessage('AG-Remote: Could not reach the host window. Please reload the window (Ctrl+Shift+P -> Developer: Reload Window).');
+      }
     }),
     // Allow / Deny links in the pairing panel, and the host window's notification.
     vscode.commands.registerCommand('ag-remote.answerPhone', async (id: unknown, allow: unknown) => {

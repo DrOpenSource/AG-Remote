@@ -43,9 +43,21 @@ async function dbOp(mode, fn) {
   });
 }
 
-const loadPairing = (room) => dbOp('readonly', (s) => s.get(room));
-const savePairing = (room, value) => dbOp('readwrite', (s) => s.put(value, room));
-const deletePairing = (room) => dbOp('readwrite', (s) => s.delete(room));
+export const loadPairing = (room) => dbOp('readonly', (s) => s.get(room));
+export const savePairing = (room, value) => dbOp('readwrite', (s) => s.put(value, room));
+export const deletePairing = (room) => dbOp('readwrite', (s) => s.delete(room));
+
+/** Lists all paired relay room IDs stored in IndexedDB. */
+export async function listStoredRooms() {
+  try {
+    const keys = await dbOp('readonly', (s) => s.getAllKeys());
+    return Array.isArray(keys) ? keys : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export const deleteStoredPairing = (room) => deletePairing(room);
 
 /**
  * Reuses a long-term device identity stored in IndexedDB so re-pairing or reconnecting
@@ -201,6 +213,24 @@ export class RelayLink {
     this.reconnectTimer = null;
     this.backoff = 1000;
     this.connect();
+  }
+
+  /** Cleanly disconnects and tears down timers and pending requests without reconnecting. */
+  stop() {
+    clearTimeout(this.probeTimer);
+    this.probeTimer = null;
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      try { this.ws.close(1000, 'stopping'); } catch (_) {}
+      this.ws = null;
+    }
+    clearInterval(this.pingTimer);
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.failPending('stopped');
+    this.setState('offline');
   }
 
   /** Reconnects now if the socket dropped (e.g. the phone slept). */

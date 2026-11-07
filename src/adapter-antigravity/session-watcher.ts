@@ -477,19 +477,21 @@ export class SessionWatcher extends EventEmitter {
       const prevStatus = this.lastSnapshot.status;
       const prevApproval = this.lastSnapshot.pendingApproval;
 
-      // Detect new messages or content updates
+      // Detect in-place content updates in existing messages (e.g. streaming or transcript_full resolution)
+      const overlap = Math.min(messages.length, this.lastSnapshot.messages.length);
+      for (let m = 0; m < overlap; m++) {
+        const prevMsg = this.lastSnapshot.messages[m];
+        const curMsg = messages[m];
+        if (prevMsg && curMsg && prevMsg.id === curMsg.id && prevMsg.text !== curMsg.text) {
+          this.emit('event', { type: 'message', message: curMsg } as AdapterEvent);
+        }
+      }
+
+      // Detect newly appended messages
       if (messages.length > this.lastSnapshot.messages.length) {
         const newMessages = messages.slice(this.lastSnapshot.messages.length);
         for (const msg of newMessages) {
           this.emit('event', { type: 'message', message: msg } as AdapterEvent);
-        }
-      } else {
-        for (let m = 0; m < messages.length; m++) {
-          const prevMsg = this.lastSnapshot.messages[m];
-          const curMsg = messages[m];
-          if (prevMsg && curMsg && prevMsg.id === curMsg.id && prevMsg.text !== curMsg.text) {
-            this.emit('event', { type: 'message', message: curMsg } as AdapterEvent);
-          }
         }
       }
       this.lastProcessedLineCount = lines.length;

@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, rankLanguageServers, parseServerCommandLine, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, parseWindowsNetstatPorts, rankLanguageServers, parseServerCommandLine, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
@@ -179,6 +179,19 @@ async function run() {
   assert(!lsofPorts.has(60612), 'lsof: IPv6-only listener skipped (bridge connects to 127.0.0.1)');
   const ss = 'LISTEN 0      4096       127.0.0.1:41234      0.0.0.0:*    users:(("language_server",pid=600,fd=9))';
   assert(JSON.stringify(parseListeningPorts(ss).get(600)) === '[41234]', 'ss: loopback port per pid (Linux without lsof)');
+
+  const netstatSample = [
+    'Active Connections',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    '  TCP    127.0.0.1:51234        0.0.0.0:0              LISTENING       234',
+    '  TCP    127.0.0.1:51235        0.0.0.0:0              LISTENING       234',
+    '  TCP    127.0.0.1:49999        0.0.0.0:0              LISTENING       1234',
+    '  TCP    127.0.0.1:48888        0.0.0.0:0              LISTENING       50234',
+    '  TCP    0.0.0.0:51236          0.0.0.0:0              LISTENING       234'
+  ].join('\r\n');
+  const winPorts = parseWindowsNetstatPorts(netstatSample, 234);
+  assert(JSON.stringify(winPorts) === '[51234,51235]', 'netstat: loopback ports match exact PID');
+  assert(!winPorts.includes(49999) && !winPorts.includes(48888), 'netstat: PID suffix collisions (1234, 50234) safely excluded');
 
   console.log('\n[Suite 1c] agy servers (Antigravity builds from late Oct 2026), same parser on every OS');
   // Shape seen on Windows 2026-10-28: one agy.exe per IDE window, token replaced

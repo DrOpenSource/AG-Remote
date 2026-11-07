@@ -194,6 +194,10 @@ export class WebSocketServer extends EventEmitter {
 
     socket.write(headers.join('\r\n'));
 
+    if (head && head.length > 0) {
+      socket.unshift(head);
+    }
+
     const client = new WebSocketClient(socket);
     this.clients.add(client);
     this.emit('connection', client);
@@ -233,6 +237,7 @@ export class WebSocketServer extends EventEmitter {
         this.pingInterval = null;
       }
     }, 30000);
+    this.pingInterval.unref?.();
   }
 
   public close(): void {

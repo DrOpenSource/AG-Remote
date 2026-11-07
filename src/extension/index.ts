@@ -392,7 +392,7 @@ export async function deactivate(): Promise<void> {
     heartbeatTimer = null;
   }
   if (activeWindowId) {
-    postHubJson(hubPort, '/api/hub/unregister', { windowId: activeWindowId });
+    await postHubJson(hubPort, '/api/hub/unregister', { windowId: activeWindowId });
   }
   if (relayHost) {
     relayHost.stop();
@@ -403,7 +403,7 @@ export async function deactivate(): Promise<void> {
     server = null;
   }
   if (sessionManager) {
-    sessionManager.registry.stop();
+    await sessionManager.stop();
   }
   if (statusBarItem) {
     statusBarItem.dispose();

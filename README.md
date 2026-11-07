@@ -7,7 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Open VSX](https://img.shields.io/open-vsx/v/dr-opensource/ag-remote?label=Open%20VSX)](https://open-vsx.org/extension/dr-opensource/ag-remote)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/dr-opensource.ag-remote?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=dr-opensource.ag-remote)
-[![VSIX Bundle](https://img.shields.io/badge/VSIX%20Size-120%20KB-success.svg)]()
+[![VSIX Bundle](https://img.shields.io/badge/VSIX%20Size-147%20KB-success.svg)]()
+[![Security Policy](https://img.shields.io/badge/Security-Policy-blue.svg)](SECURITY.md)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational.svg)]()
 
 > Walk away from your desk without your Antigravity agent stalling on a permission prompt.
@@ -72,6 +73,8 @@ AG-Remote has permissions to approve terminal commands and file modifications. S
 8. **Local Audit Logging**: Every prompt, approval (`Allow Once`, `Always Allow`), denial, and stop action is logged locally with timestamps. Zero telemetry or network tracking.
 9. **Instant Token Revocation**: Run `Antigravity Remote: Revoke All Pairings` or `Manage Paired Phones` from the command palette to disconnect paired devices immediately.
 
+> 🛡️ For complete cryptographic details, threat models, and vulnerability disclosure guidelines, see [SECURITY.md](SECURITY.md).
+
 ---
 
 ## 📱 Mobile Features
@@ -116,21 +119,32 @@ AG-Remote has permissions to approve terminal commands and file modifications. S
 Run the comprehensive test suite across all subsystems:
 
 ```powershell
-# Run full automated test suite (11 test suites)
+# Run full automated test suite (12 core test suites)
 npm test
+
+# Run Cloudflare Workers relay test suite
+npm --prefix relay test
+
+# Run Playwright browser test suite (using Edge or Chrome)
+$env:PW_CHANNEL="msedge"; npm run test:browser
 
 # Build extension and CLI bundles
 npm run build
 
-# Package production VSIX
+# Package production VSIX (< 150 KB budget)
 npm run package
 ```
 
 ---
 
-## 🤝 Contributing
+## 🤝 Contributing & Community
 
-Bug reports and ideas are welcome in [Issues](https://github.com/DrOpenSource/AG-Remote/issues). If the phone connects but shows no conversation, run `Antigravity Remote: Copy Diagnostics` and paste the report (it contains no tokens or chat titles). See the [roadmap](docs/ROADMAP.md) for what's planned.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for our development workflow, test-first requirements, and architectural guardrails (zero runtime dependencies, < 150 KB VSIX budget).
+
+- **Bug Reports & Feature Requests**: Open an issue using our [GitHub Issue Templates](https://github.com/DrOpenSource/AG-Remote/issues/new/choose).
+- **Diagnostics**: If the phone connects but shows no conversation, run `Antigravity Remote: Copy Diagnostics` in the affected window and paste the report (it contains zero tokens or chat titles).
+- **Security Vulnerabilities**: See [SECURITY.md](SECURITY.md) for private reporting guidelines.
+- **Roadmap**: See [ROADMAP.md](docs/ROADMAP.md) for what's planned.
 
 ---
 

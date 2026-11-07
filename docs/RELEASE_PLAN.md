@@ -235,7 +235,7 @@ Release
 - [ ] `0.3.1-B1` Small built-in Markdown renderer (no CDN, no dependency), building DOM nodes only.
 - [ ] `0.3.1-B2` README: 3 to 5 phone screenshots and a short demo GIF.
 - [ ] `0.3.1-B3` Listing description rewritten around "end-to-end encrypted, any network, no debug flag, full approval controls".
-- [ ] `0.3.1-B4` `CONTRIBUTING.md`, `SECURITY.md` (how to report privately), issue templates (bug with diagnostics, feature request).
+- [x] `0.3.1-B4` `CONTRIBUTING.md`, `SECURITY.md` (how to report privately), issue templates (bug with diagnostics, feature request).
 
 **Manual checks**
 - [ ] `0.3.1-V1` Real agent replies with code and lists look right on a small phone in light and dark mode.

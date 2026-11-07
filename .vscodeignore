@@ -33,3 +33,5 @@ playwright-report/**
 assets/banner.png
 assets/architecture-diagram.svg
 dist/pwa/fonts/OFL.txt
+SECURITY.md
+CONTRIBUTING.md

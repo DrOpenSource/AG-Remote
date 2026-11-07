@@ -298,3 +298,48 @@ test('attach tray shows file chips with name and size and remove works (0.3.0-T5
   await expect(chip).toBeHidden();
   await expect(page.locator('#attachTray')).toBeHidden();
 });
+
+test('attach tray image can be clicked to view full size preview in lightbox modal', async ({ page }) => {
+  await openApp(page);
+  await page.locator('#attachInput').setInputFiles({ name: 'shot.png', mimeType: 'image/png', buffer: PNG });
+  await expect(page.locator('.attach-item')).toHaveCount(1);
+
+  // Click the thumbnail to open lightbox
+  await page.locator('.attach-item.image-item img').click();
+  await expect(page.locator('#imageModal')).toBeVisible();
+  await expect(page.locator('#imageModalImg')).toHaveAttribute('src', /^data:image\//);
+  await expect(page.locator('#imageModalTitle')).toContainText('shot.png');
+
+  // Close via close button
+  await page.locator('#btnImageModalClose').click();
+  await expect(page.locator('#imageModal')).toBeHidden();
+
+  // Re-open and close via escape
+  await page.locator('.attach-item.image-item img').click();
+  await expect(page.locator('#imageModal')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#imageModal')).toBeHidden();
+});
+
+test('host switcher drop-down renders and allows viewing paired PCs', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('ag_remote_hosts', JSON.stringify([
+      { room: 'room_host_pc_1', name: 'Work Desktop', hostName: 'WORK-PC', lastSeen: Date.now() },
+      { room: 'room_host_pc_2', name: 'Home Laptop', hostName: 'LAPTOP-PC', lastSeen: Date.now() - 60000 }
+    ]));
+  });
+  await openApp(page);
+
+  await expect(page.locator('#btnHostSelector')).toBeVisible();
+  await expect(page.locator('#currentHostName')).toHaveText('Work Desktop');
+
+  // Open dropdown
+  await page.locator('#btnHostSelector').click();
+  await expect(page.locator('#hostDropdown')).toBeVisible();
+  await expect(page.locator('.host-dropdown-item')).toHaveCount(2);
+
+  // Check drawer has hosts
+  await page.locator('#btnOpenDrawer').click();
+  await expect(page.locator('#drawer')).toBeVisible();
+  await expect(page.locator('#drawerHostsList .drawer-item')).toHaveCount(2);
+});

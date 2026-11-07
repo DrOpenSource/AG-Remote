@@ -85,6 +85,7 @@ async function runTests() {
   const winList = await getJson('http://127.0.0.1:49235/api/windows', token);
   assert(Array.isArray(winList.windows), 'GET /api/windows returns windows array');
   assert(winList.windows.length >= 1, 'Registered window present in /api/windows');
+  assert(typeof winList.hostName === 'string' && winList.hostName.length > 0, 'GET /api/windows returns hostName');
 
   // Test 4: POST /api/windows/select
   const selRes = await postJson('http://127.0.0.1:49235/api/windows/select', { windowId: 'win-ext-test' }, token);

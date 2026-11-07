@@ -1,3 +1,4 @@
+import os from 'os';
 import path from 'path';
 import { SessionManager } from '../core/session-manager.ts';
 import type { PromptImage, PromptFile } from '../core/types.ts';
@@ -80,7 +81,7 @@ export async function handlePhoneApi(
   // GET /api/windows (List active, live Antigravity windows)
   if (method === 'GET' && pathname === '/api/windows') {
     const selected = sm.registry.getSelected();
-    return { status: 200, body: { windows: sm.listWindows(), selectedId: selected?.windowId || null } };
+    return { status: 200, body: { windows: sm.listWindows(), selectedId: selected?.windowId || null, hostName: os.hostname() } };
   }
 
   // POST /api/windows/select (Switch active target window from phone)
@@ -88,12 +89,12 @@ export async function handlePhoneApi(
     if (!body || typeof body.windowId !== 'string') return bad('Body must contain "windowId" string');
     const win = sm.selectWindow(body.windowId);
     if (!win) return { status: 404, body: { error: 'Window not found' } };
-    return { status: 200, body: { status: 'selected', window: win, snapshot: await sm.getSnapshot() } };
+    return { status: 200, body: { status: 'selected', window: win, snapshot: await sm.getSnapshot(), hostName: os.hostname() } };
   }
 
   // GET /api/state
   if (method === 'GET' && pathname === '/api/state') {
-    return { status: 200, body: await sm.getSnapshot(query.get('windowId') || undefined) };
+    return { status: 200, body: { ...(await sm.getSnapshot(query.get('windowId') || undefined)), hostName: os.hostname() } };
   }
 
   // GET /api/sessions (Discover active Antigravity conversations)

@@ -43,6 +43,8 @@
   const toastBanner = document.getElementById('toastBanner');
   const toastMessage = document.getElementById('toastMessage');
   const toastClose = document.getElementById('toastClose');
+  const contextBar = document.getElementById('contextBar');
+  const contextDivider = document.getElementById('contextDivider');
   const btnHostSelector = document.getElementById('btnHostSelector');
   const currentHostName = document.getElementById('currentHostName');
   const hostDropdown = document.getElementById('hostDropdown');
@@ -257,12 +259,21 @@
     btnHostSelector?.setAttribute('aria-expanded', 'false');
   }
 
+  function updateContextBarVisibility() {
+    if (!contextBar) return;
+    const showHost = btnHostSelector && !btnHostSelector.classList.contains('hidden');
+    const showTabs = tabBar && !tabBar.classList.contains('hidden') && tabs.size > 1;
+    contextBar.classList.toggle('hidden', !showHost && !showTabs);
+    if (contextDivider) contextDivider.classList.toggle('hidden', !showHost || !showTabs);
+  }
+
   function renderHostSelector() {
     if (!btnHostSelector) return;
     const hosts = getStoredHosts();
     if (!relayMode && hosts.length === 0) {
       btnHostSelector.classList.add('hidden');
       if (drawerHostsSection) drawerHostsSection.classList.add('hidden');
+      updateContextBarVisibility();
       return;
     }
     btnHostSelector.classList.remove('hidden');
@@ -274,6 +285,7 @@
     if (currentHostName) currentHostName.textContent = displayName;
 
     renderDrawerHosts(hosts);
+    updateContextBarVisibility();
   }
 
   function renderHostDropdown() {
@@ -800,6 +812,7 @@
     }
     const active = tabBar.querySelector('[aria-selected="true"]');
     if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    updateContextBarVisibility();
   }
 
   function renderActiveTab() {
@@ -1952,8 +1965,13 @@
     });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && imageModal && !imageModal.classList.contains('hidden')) {
-      closeImagePreview();
+    if (e.key === 'Escape') {
+      if (imageModal && !imageModal.classList.contains('hidden')) {
+        closeImagePreview();
+      }
+      if (hostDropdown && !hostDropdown.classList.contains('hidden')) {
+        closeHostDropdown();
+      }
     }
   });
 

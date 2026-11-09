@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.4: Real-time status tracking during tools, Mermaid diagrams, and mobile long-prompt fixes
+
+> **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.
+
+- **Real-Time Agent Working Status (No Status Desync).** Resolved an issue where background tool execution (terminal commands, file operations, web research) caused the phone to prematurely show "Ready" while the agent was actively running. `LsBridge` and `SessionWatcher` now detect in-flight tool calls so the mobile status accurately stays on "Working" with the animated activity indicator.
+- **Built-in Native Mermaid Diagram Visualizer.** Markdown ````mermaid blocks are now automatically parsed and rendered into clean, responsive SVG vector flowcharts, sequence diagrams, and class diagrams directly within chat bubbles. Includes an interactive Diagram / Code toggle and one-click code copy button.
+- **Mobile Long Text Input Truncation Fix.** Removed the 4,000 character input ceiling from `#promptInput`. Added defensive DOM attribute stripping at startup and bumped the PWA Service Worker cache (`ag-remote-shell-v33`) to ensure all mobile and desktop PWA clients immediately discard stale cached shell assets.
+- **Mobile Textarea Touch Scrolling & Paste Polish.** Added `-webkit-overflow-scrolling: touch;`, `overflow-y: auto;`, and `overscroll-behavior: contain;` to `#promptInput`, preventing pasted multi-line prompts from visually clipping or touch-bubbling into chat feed dismissals. Improved clipboard paste handling to preserve pasted text when rich clipboard data is present.
+- **PC Host Dropdown Stacking Layer Fix.** Ensured the paired PC selector dropdown in the context bar stays reliably on top of all screen content by elevating its `z-index` and establishing `overflow: visible` on the context bar.
+
 ## 0.3.3: Multi-PC host switcher, full-size image preview modal, and host recovery
 
 > **After installing this update, reload your open Antigravity windows** (Ctrl+Shift+P -> **Developer: Reload Window**). The phone app updates itself automatically.

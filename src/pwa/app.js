@@ -64,6 +64,11 @@
   const tokenInput = document.getElementById('tokenInput');
   const btnSaveToken = document.getElementById('btnSaveToken');
 
+  if (promptInput) {
+    promptInput.removeAttribute('maxlength');
+    promptInput.removeAttribute('maxLength');
+  }
+
   // State
   let token = localStorage.getItem('ag_remote_token') || '';
   let autoPilotEnabled = localStorage.getItem('ag_remote_autopilot') === 'true';
@@ -2835,13 +2840,20 @@
     attachInput.value = ''; // lets the same image be picked again
   });
 
-  // Pasting an image or file attaches it
+  // Pasting an image or file attaches it, while preserving pasted text
   promptInput.addEventListener('paste', (e) => {
     const files = Array.from(e.clipboardData?.files || []);
-    if (files.length) {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (files.length && !text.trim()) {
       e.preventDefault();
       addAttachments(files);
     }
+    // Auto-expand textarea & update send button on next tick after paste completes
+    setTimeout(() => {
+      updateSendEnabled();
+      promptInput.style.height = 'auto';
+      promptInput.style.height = `${Math.min(promptInput.scrollHeight, 144)}px`;
+    }, 0);
   });
 
   promptInput.addEventListener('input', () => {
@@ -3152,7 +3164,22 @@
   // 7. Register Service Worker for PWA (Requirement F9)
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        reg.update().catch(() => {});
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
+      }).catch(() => {});
     });
   }
   // Navigation Drawer & Auto-Pilot & Theme Manager

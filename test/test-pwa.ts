@@ -67,6 +67,8 @@ async function runTests() {
   assert(cssRes.body.includes('file-item'), 'app.css contains .attach-item.file-item for document attachments');
   assert(cssRes.body.includes('.table-container table') && cssRes.body.includes('overflow-wrap: break-word'), 'app.css contains table formatting and wrap safeguards');
   assert(cssRes.body.includes('.drawer-item-badge') && cssRes.body.includes('flex-shrink: 0'), 'app.css contains drawer badge shape and whitespace safeguards');
+  assert(cssRes.body.includes('.context-bar') && cssRes.body.includes('overflow: visible'), 'app.css context-bar has overflow: visible to prevent dropdown clipping');
+  assert(cssRes.body.includes('mermaid-block'), 'app.css contains mermaid diagram styles');
 
   // 3. GET /app.js
   const jsRes = await fetchUrl('/app.js');
@@ -81,6 +83,7 @@ async function runTests() {
   assert(jsRes.body.includes('splitTableCells'), 'app.js contains robust GFM table parsing with alignment support');
   assert(jsRes.body.includes('md-hr'), 'app.js contains horizontal rule rendering');
   assert(jsRes.body.includes('formatInlineText') || jsRes.body.includes('HTML_ENTITIES'), 'app.js contains entity, LaTeX and arrow text formatting');
+  assert(jsRes.body.includes('renderMermaidSvg') && jsRes.body.includes('buildMermaidBlock'), 'app.js contains native Mermaid diagram parsing and rendering');
 
   // 4. GET /manifest.json
   const manifestRes = await fetchUrl('/manifest.json');

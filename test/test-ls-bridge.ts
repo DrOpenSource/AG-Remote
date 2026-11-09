@@ -551,6 +551,25 @@ async function run() {
   state.runStatus = 'CASCADE_RUN_STATUS_IDLE';
   await (idleAdapter as any).pollLive();
   assert((await idleAdapter.getSnapshot()).status === 'idle', 'back to IDLE: Working clears without any new message');
+
+  // Active in-flight tools: agent emits tool call (e.g. build Tauri, compile installer)
+  // Even if server reports IDLE, status must be generating ("Working") so user is not misled.
+  state.steps.push(
+    { type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE', status: 'CORTEX_STEP_STATUS_DONE', plannerResponse: { toolCalls: [{ name: 'run_command' }] } },
+    { type: 'CORTEX_STEP_TYPE_RUN_COMMAND', status: 'CORTEX_STEP_STATUS_RUNNING', metadata: { createdAt: new Date().toISOString() } }
+  );
+  await (idleAdapter as any).pollLive();
+  assert(bridge.isRunning(CASCADE) === true, 'bridge: in-flight tool execution means running even if server runStatus is IDLE');
+  assert((await idleAdapter.getSnapshot()).status === 'generating', 'adapter: phone shows Working while tool executes in background');
+
+  // Once concluding planner response (no tool calls) arrives, status returns to idle
+  state.steps.push(
+    { type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE', status: 'CORTEX_STEP_STATUS_DONE', plannerResponse: { toolCalls: [] }, metadata: { completedAt: new Date().toISOString() } }
+  );
+  await (idleAdapter as any).pollLive();
+  assert(bridge.isRunning(CASCADE) === false, 'bridge: final tool-less planner response clears running status');
+  assert((await idleAdapter.getSnapshot()).status === 'idle', 'adapter: phone shows Ready after turn concludes');
+
   const described = await idleAdapter.describe();
   assert(described.shownConversation === CASCADE.slice(0, 8) && (described.messages as number) >= 1 && described.newestHistoryFolder === idleBrain && described.conversationsForFolder === 1,
     'describe(): which conversation the phone gets, its message count and where its history is');

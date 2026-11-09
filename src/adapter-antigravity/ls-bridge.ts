@@ -166,6 +166,65 @@ export function extractPending(cascadeId: string, trajectory: any): LiveInteract
   return null;
 }
 
+/**
+ * Checks whether a trajectory has active in-flight tools (running commands, file operations, subagents)
+ * that have not concluded with a final tool-less planner response. Pure; exported for tests.
+ */
+export function hasInFlightTools(traj: any, staleMs: number = 10 * 60 * 1000): boolean {
+  if (!traj || !Array.isArray(traj.steps) || traj.steps.length === 0) return false;
+  const steps: any[] = traj.steps;
+
+  // Find the last user input
+  let lastUserIdx = -1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i]?.type?.includes('USER_INPUT')) {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx === -1) return false;
+
+  // Check freshness of the last step
+  const lastStep = steps[steps.length - 1];
+  const lastTs = lastStep?.metadata?.completedAt || lastStep?.metadata?.createdAt || lastStep?.metadata?.startedAt;
+  if (lastTs) {
+    const age = Date.now() - new Date(lastTs).getTime();
+    if (!isNaN(age) && age >= staleMs) return false;
+  }
+
+  // Check if executorMetadatas has already recorded completion for this turn
+  const execs = Array.isArray(traj.executorMetadatas) ? traj.executorMetadatas : [];
+  const lastExec = execs[execs.length - 1];
+  if (lastExec && typeof lastExec.lastStepIdx === 'number' && lastExec.lastStepIdx >= lastUserIdx) {
+    return false;
+  }
+
+  // Check planner responses after the last user input
+  let lastPlannerIdx = -1;
+  let lastPlannerHasTools = false;
+  for (let i = lastUserIdx + 1; i < steps.length; i++) {
+    const s = steps[i];
+    if (s?.type?.includes('PLANNER_RESPONSE')) {
+      lastPlannerIdx = i;
+      const tc = s.plannerResponse?.toolCalls;
+      lastPlannerHasTools = Array.isArray(tc) && tc.length > 0;
+    }
+  }
+
+  if (lastPlannerIdx >= lastUserIdx && lastPlannerHasTools) return true;
+
+  if (lastStep) {
+    const status = String(lastStep.status || '');
+    if (/RUNNING|WAITING/.test(status)) return true;
+    const type = String(lastStep.type || '');
+    if (/RUN_COMMAND|CODE_ACTION|VIEW_FILE|CHECKPOINT|SYSTEM_MESSAGE/.test(type) && lastPlannerHasTools) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export type ParsedServer = Omit<LsServer, 'pid' | 'ports' | 'ppid'>;
 
 /** All values of a --flag (as `--flag value` or `--flag=value`, optionally quoted); never matches --other_flag. */
@@ -347,22 +406,33 @@ export class LsBridge {
 
   public async getTrajectory(cascadeId: string): Promise<any | null> {
     const res = await this.call('GetCascadeTrajectory', { cascadeId });
-    if (res) this.runStatus.set(cascadeId, typeof res.status === 'string' ? res.status : undefined);
+    if (res) {
+      this.runStatus.set(cascadeId, typeof res.status === 'string' ? res.status : undefined);
+      this.lastTrajectories.set(cascadeId, res.trajectory ?? null);
+    }
     return res?.trajectory ?? null;
   }
 
   /** Last run status the server reported per conversation (CASCADE_RUN_STATUS_IDLE / RUNNING / BUSY / CANCELING). */
   private runStatus = new Map<string, string | undefined>();
+  /** Last trajectory data per conversation, used to check for in-flight tool executions. */
+  private lastTrajectories = new Map<string, any | null>();
 
   /**
-   * Whether the agent is working on this conversation, from the server's own run status as of the last
-   * trajectory read (the live poll reads it every second). null when the server didn't say.
+   * Whether the agent is working on this conversation:
+   *  - explicitly RUNNING / BUSY / CANCELING in server run status;
+   *  - or has active in-flight tools (shell commands, edits, subagents) in the trajectory
+   *    that have not concluded with a final tool-less planner response.
+   * null when the server didn't say.
    */
   public isRunning(cascadeId: string): boolean | null {
     const status = this.runStatus.get(cascadeId);
-    if (!status) return null;
-    if (/RUNNING|BUSY|CANCELING/.test(status)) return true;
-    if (/IDLE/.test(status)) return false;
+    if (status && /RUNNING|BUSY|CANCELING/.test(status)) return true;
+
+    const traj = this.lastTrajectories.get(cascadeId);
+    if (hasInFlightTools(traj)) return true;
+
+    if (status && /IDLE/.test(status)) return false;
     return null;
   }
 

@@ -296,6 +296,7 @@ export class AntigravityAdapter implements IdeAdapter {
       if (!(err instanceof LsBridgeError && err.imagesRejected)) throw err;
       await this.ls.sendPrompt(cid, prompt);
     }
+    await this.pollLive();
   }
 
   public async approve(id: string, _response?: string, option: ApprovalOption = 'allow_once'): Promise<void> {

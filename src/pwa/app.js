@@ -1248,6 +1248,548 @@
     }
   }
 
+  // Mermaid Diagram SVG Rendering Engine
+  function parseMermaidNodeToken(str) {
+    const trimmed = str.trim();
+    let m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\[\[(.*)\]\]$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'subroutine' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\[\((.*)\)\]$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'cylinder' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\(\[(.*)\]\)$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'stadium' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\(\((.*)\)\)$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'circle' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\{(.*)\}$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'rhombus' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\((.*)\)$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'rounded' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)\s*\[(.*)\]$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[2]), shape: 'rect' };
+
+    m = trimmed.match(/^([A-Za-z0-9_\-\.]+)$/);
+    if (m) return { id: m[1], label: cleanMermaidLabel(m[1]), shape: 'rect' };
+
+    return null;
+  }
+
+  function cleanMermaidLabel(s) {
+    return String(s || '').trim().replace(/^["']|["']$/g, '');
+  }
+
+  function parseMermaidLinkInfo(raw) {
+    let label = '';
+    let style = 'solid';
+    let arrow = true;
+
+    if (raw.includes('-.-')) style = 'dashed';
+    else if (raw.includes('==')) style = 'thick';
+    if (!raw.endsWith('>') && !raw.endsWith('|')) arrow = false;
+
+    const pipeMatch = raw.match(/\|(.*?)\|/);
+    if (pipeMatch) {
+      label = cleanMermaidLabel(pipeMatch[1]);
+    } else {
+      const textMatch = raw.match(/--\s*["']?(.*?)["']?\s*--/);
+      if (textMatch) label = cleanMermaidLabel(textMatch[1]);
+    }
+    return { label, style, arrow };
+  }
+
+  const MERMAID_LINK_REGEX = /\s*(-->\|.*?\||--\s*.*?\s*-->|==\s*.*?\s*==>|-\.\s*.*?\s*\.->|-->|---|==>|-\.->|--\s*.*?\s*---|->)\s*/;
+
+  function renderFlowchartSvg(lines, dir = 'TD') {
+    const nodes = new Map();
+    const edges = [];
+
+    function ensureNode(token) {
+      const parsed = parseMermaidNodeToken(token);
+      if (!parsed) return null;
+      if (!nodes.has(parsed.id)) {
+        nodes.set(parsed.id, {
+          id: parsed.id,
+          label: parsed.label || parsed.id,
+          shape: parsed.shape || 'rect',
+          rank: 0
+        });
+      } else if (parsed.label && parsed.label !== parsed.id) {
+        nodes.get(parsed.id).label = parsed.label;
+        nodes.get(parsed.id).shape = parsed.shape;
+      }
+      return nodes.get(parsed.id);
+    }
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('subgraph') || trimmed === 'end' || trimmed.startsWith('%%')) continue;
+
+      let remaining = trimmed;
+      const parts = [];
+      while (remaining) {
+        const linkMatch = remaining.match(MERMAID_LINK_REGEX);
+        if (!linkMatch) {
+          parts.push({ type: 'node', raw: remaining.trim() });
+          break;
+        }
+        const idx = linkMatch.index;
+        const nodeStr = remaining.slice(0, idx).trim();
+        if (nodeStr) parts.push({ type: 'node', raw: nodeStr });
+        parts.push({ type: 'link', raw: linkMatch[0].trim() });
+        remaining = remaining.slice(idx + linkMatch[0].length).trim();
+      }
+
+      let lastNode = null;
+      let pendingLink = null;
+      for (const p of parts) {
+        if (p.type === 'node') {
+          const node = ensureNode(p.raw);
+          if (lastNode && pendingLink && node) {
+            edges.push({
+              from: lastNode.id,
+              to: node.id,
+              label: pendingLink.label,
+              style: pendingLink.style,
+              arrow: pendingLink.arrow
+            });
+          }
+          lastNode = node;
+          pendingLink = null;
+        } else if (p.type === 'link') {
+          pendingLink = parseMermaidLinkInfo(p.raw);
+        }
+      }
+    }
+
+    if (nodes.size === 0) return null;
+
+    const nodeList = Array.from(nodes.values());
+    for (let iter = 0; iter < nodeList.length + 2; iter++) {
+      for (const e of edges) {
+        const u = nodes.get(e.from);
+        const v = nodes.get(e.to);
+        if (u && v && v.id !== u.id) {
+          if (v.rank <= u.rank) {
+            v.rank = u.rank + 1;
+          }
+        }
+      }
+    }
+
+    nodeList.forEach(n => {
+      n.width = Math.max(90, Math.min(240, n.label.length * 8.5 + 32));
+      n.height = n.shape === 'circle' ? Math.max(n.width, 54) : (n.shape === 'rhombus' ? 56 : 42);
+      if (n.shape === 'circle') n.width = n.height;
+    });
+
+    const isLR = dir === 'LR' || dir === 'RL';
+    const ranks = [];
+    nodeList.forEach(n => {
+      if (!ranks[n.rank]) ranks[n.rank] = [];
+      ranks[n.rank].push(n);
+    });
+
+    const colGap = 36;
+    const rowGap = 56;
+
+    let svgWidth = 0;
+    let svgHeight = 0;
+
+    if (!isLR) {
+      let maxRankWidth = 0;
+      ranks.forEach(rNodes => {
+        const totalW = rNodes.reduce((acc, n) => acc + n.width, 0) + (rNodes.length - 1) * colGap;
+        maxRankWidth = Math.max(maxRankWidth, totalW);
+      });
+
+      svgWidth = Math.max(maxRankWidth + 80, 360);
+      let curY = 50;
+
+      ranks.forEach(rNodes => {
+        const totalW = rNodes.reduce((acc, n) => acc + n.width, 0) + (rNodes.length - 1) * colGap;
+        let curX = (svgWidth - totalW) / 2;
+        let maxH = 0;
+        rNodes.forEach(n => {
+          n.x = curX + n.width / 2;
+          n.y = curY + n.height / 2;
+          curX += n.width + colGap;
+          maxH = Math.max(maxH, n.height);
+        });
+        curY += maxH + rowGap;
+      });
+      svgHeight = curY;
+    } else {
+      let maxRankHeight = 0;
+      ranks.forEach(rNodes => {
+        const totalH = rNodes.reduce((acc, n) => acc + n.height, 0) + (rNodes.length - 1) * rowGap;
+        maxRankHeight = Math.max(maxRankHeight, totalH);
+      });
+
+      svgHeight = Math.max(maxRankHeight + 80, 240);
+      let curX = 50;
+
+      ranks.forEach(rNodes => {
+        const totalH = rNodes.reduce((acc, n) => acc + n.height, 0) + (rNodes.length - 1) * rowGap;
+        let curY = (svgHeight - totalH) / 2;
+        let maxW = 0;
+        rNodes.forEach(n => {
+          n.x = curX + n.width / 2;
+          n.y = curY + n.height / 2;
+          curY += n.height + rowGap;
+          maxW = Math.max(maxW, n.width);
+        });
+        curX += maxW + colGap;
+      });
+      svgWidth = curX;
+    }
+
+    const markerId = 'flow-arrow-' + Math.random().toString(36).slice(2, 8);
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgWidth} ${svgHeight}" width="${svgWidth}" height="${svgHeight}" class="mermaid-svg mermaid-flowchart">
+      <defs>
+        <marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--md-outline, #8e9196)"/>
+        </marker>
+      </defs>`;
+
+    edges.forEach(e => {
+      const u = nodes.get(e.from);
+      const v = nodes.get(e.to);
+      if (!u || !v) return;
+
+      let x1 = u.x, y1 = u.y, x2 = v.x, y2 = v.y;
+      if (isLR) {
+        x1 = u.x + u.width / 2;
+        x2 = v.x - v.width / 2 - 4;
+      } else {
+        y1 = u.y + u.height / 2;
+        y2 = v.y - v.height / 2 - 4;
+      }
+
+      const strokeDash = e.style === 'dashed' ? 'stroke-dasharray="5 4"' : '';
+      const strokeWidth = e.style === 'thick' ? '2.5' : '1.5';
+      const marker = e.arrow ? `marker-end="url(#${markerId})"` : '';
+
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+
+      let pathD = '';
+      if (isLR) {
+        pathD = `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
+      } else {
+        pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+      }
+
+      svg += `<path d="${pathD}" fill="none" stroke="var(--md-outline, #8e9196)" stroke-width="${strokeWidth}" ${strokeDash} ${marker}/>`;
+
+      if (e.label) {
+        const lw = Math.max(e.label.length * 7.5 + 14, 30);
+        svg += `<rect x="${midX - lw / 2}" y="${midY - 10}" width="${lw}" height="20" rx="4" fill="var(--md-surface-container-highest, #333538)" stroke="var(--md-outline-variant, #444746)" stroke-width="0.75"/>
+          <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="11" fill="var(--md-on-surface-variant, #c4c7c5)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeHtml(e.label)}</text>`;
+      }
+    });
+
+    nodes.forEach(n => {
+      const rx = n.x - n.width / 2;
+      const ry = n.y - n.height / 2;
+
+      if (n.shape === 'rhombus') {
+        const pts = `${n.x},${ry} ${rx + n.width},${n.y} ${n.x},${ry + n.height} ${rx},${n.y}`;
+        svg += `<polygon points="${pts}" fill="var(--md-surface-container, #282a2d)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>`;
+      } else if (n.shape === 'circle') {
+        svg += `<circle cx="${n.x}" cy="${n.y}" r="${n.width / 2}" fill="var(--md-surface-container, #282a2d)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>`;
+      } else if (n.shape === 'rounded' || n.shape === 'stadium') {
+        const corner = n.shape === 'stadium' ? n.height / 2 : 12;
+        svg += `<rect x="${rx}" y="${ry}" width="${n.width}" height="${n.height}" rx="${corner}" fill="var(--md-surface-container, #282a2d)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>`;
+      } else if (n.shape === 'cylinder') {
+        const ch = n.height;
+        const cw = n.width;
+        const cyR = 6;
+        svg += `<path d="M ${rx} ${ry + cyR} A ${cw / 2} ${cyR} 0 0 1 ${rx + cw} ${ry + cyR} L ${rx + cw} ${ry + ch - cyR} A ${cw / 2} ${cyR} 0 0 1 ${rx} ${ry + ch - cyR} Z" fill="var(--md-surface-container, #282a2d)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>
+          <ellipse cx="${n.x}" cy="${ry + cyR}" rx="${cw / 2}" ry="${cyR}" fill="var(--md-surface-container-high, #313337)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>`;
+      } else {
+        svg += `<rect x="${rx}" y="${ry}" width="${n.width}" height="${n.height}" rx="8" fill="var(--md-surface-container, #282a2d)" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5"/>`;
+      }
+
+      svg += `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" font-size="12" font-weight="500" fill="var(--md-on-surface, #e3e3e3)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeHtml(n.label)}</text>`;
+    });
+
+    svg += `</svg>`;
+    return svg;
+  }
+
+  function renderSequenceDiagramSvg(lines) {
+    const participants = [];
+    const partMap = new Map();
+    function getPart(id, label) {
+      const cleanId = id.trim();
+      if (!partMap.has(cleanId)) {
+        const p = { id: cleanId, label: (label || cleanId).replace(/^["']|["']$/g, ''), index: participants.length };
+        partMap.set(cleanId, p);
+        participants.push(p);
+      } else if (label) {
+        partMap.get(cleanId).label = label.replace(/^["']|["']$/g, '');
+      }
+      return partMap.get(cleanId);
+    }
+
+    const events = [];
+    for (const line of lines) {
+      const pMatch = line.match(/^(participant|actor)\s+([A-Za-z0-9_\-\.]+)(?:\s+as\s+(.+))?$/i);
+      if (pMatch) {
+        getPart(pMatch[2], pMatch[3]);
+        continue;
+      }
+      const noteMatch = line.match(/^Note\s+(?:over\s+([A-Za-z0-9_\-\.,\s]+)|(left of|right of)\s+([A-Za-z0-9_\-\.]+)):\s*(.+)$/i);
+      if (noteMatch) {
+        if (noteMatch[1]) {
+          const ids = noteMatch[1].split(',').map(s => s.trim());
+          ids.forEach(id => getPart(id));
+          events.push({ type: 'note', from: ids[0], to: ids[ids.length - 1], text: noteMatch[4] });
+        } else {
+          const id = noteMatch[3].trim();
+          getPart(id);
+          events.push({ type: 'note', from: id, to: id, text: noteMatch[4] });
+        }
+        continue;
+      }
+
+      const arrowMatch = line.match(/^([A-Za-z0-9_\-\.]+)\s*(-->>|->>|-->|->|-x|--x)\s*([A-Za-z0-9_\-\.]+)\s*:\s*(.*)$/);
+      if (arrowMatch) {
+        const from = getPart(arrowMatch[1]);
+        const to = getPart(arrowMatch[3]);
+        events.push({
+          type: 'message',
+          from: from.id,
+          to: to.id,
+          arrow: arrowMatch[2],
+          text: arrowMatch[4].trim()
+        });
+      }
+    }
+
+    if (participants.length === 0) return null;
+
+    const colWidth = 160;
+    const topPad = 50;
+    const rowHeight = 48;
+    const width = Math.max(participants.length * colWidth + 80, 360);
+    const height = topPad + events.length * rowHeight + 90;
+
+    participants.forEach((p, idx) => {
+      p.x = 40 + idx * colWidth + colWidth / 2;
+    });
+
+    const arrowId = 'seq-arrow-' + Math.random().toString(36).slice(2, 8);
+    const arrowOpenId = 'seq-arrow-open-' + Math.random().toString(36).slice(2, 8);
+
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="mermaid-svg mermaid-sequence">
+      <defs>
+        <marker id="${arrowId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--md-primary, #a8c7fa)"/>
+        </marker>
+        <marker id="${arrowOpenId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9" fill="none" stroke="var(--md-primary, #a8c7fa)" stroke-width="2"/>
+        </marker>
+      </defs>`;
+
+    participants.forEach(p => {
+      svg += `<line x1="${p.x}" y1="${topPad + 20}" x2="${p.x}" y2="${height - 40}" stroke="var(--md-outline-variant, #444746)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+    });
+
+    events.forEach((ev, idx) => {
+      const y = topPad + 45 + idx * rowHeight;
+      const pFrom = partMap.get(ev.from);
+      const pTo = partMap.get(ev.to);
+      if (!pFrom || !pTo) return;
+
+      if (ev.type === 'note') {
+        const x1 = Math.min(pFrom.x, pTo.x) - 40;
+        const x2 = Math.max(pFrom.x, pTo.x) + 40;
+        const nw = Math.max(x2 - x1, 100);
+        svg += `<rect x="${x1}" y="${y - 14}" width="${nw}" height="28" rx="4" fill="var(--md-secondary-container, #3b4858)" stroke="var(--md-outline, #8e9196)" stroke-width="1"/>
+          <text x="${x1 + nw / 2}" y="${y + 4}" text-anchor="middle" font-size="12" fill="var(--md-on-secondary-container, #d6e3ff)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeHtml(ev.text)}</text>`;
+      } else if (ev.type === 'message') {
+        const isDashed = ev.arrow.includes('--');
+        const isSelf = pFrom.id === pTo.id;
+        const marker = ev.arrow.endsWith('>>') ? `url(#${arrowId})` : `url(#${arrowOpenId})`;
+
+        if (isSelf) {
+          svg += `<path d="M ${pFrom.x} ${y - 10} L ${pFrom.x + 35} ${y - 10} L ${pFrom.x + 35} ${y + 10} L ${pFrom.x} ${y + 10}" fill="none" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5" stroke-dasharray="${isDashed ? '4 3' : 'none'}" marker-end="${marker}"/>
+            <text x="${pFrom.x + 42}" y="${y + 4}" font-size="12" fill="var(--md-on-surface, #e3e3e3)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeHtml(ev.text)}</text>`;
+        } else {
+          const textX = (pFrom.x + pTo.x) / 2;
+          const dir = pTo.x > pFrom.x ? 1 : -1;
+          const endX = pTo.x - dir * 4;
+          svg += `<line x1="${pFrom.x}" y1="${y}" x2="${endX}" y2="${y}" stroke="var(--md-primary, #a8c7fa)" stroke-width="1.5" stroke-dasharray="${isDashed ? '4 3' : 'none'}" marker-end="${marker}"/>
+            <text x="${textX}" y="${y - 6}" text-anchor="middle" font-size="12" fill="var(--md-on-surface, #e3e3e3)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeHtml(ev.text)}</text>`;
+        }
+      }
+    });
+
+    participants.forEach(p => {
+      const pw = Math.max(p.label.length * 8 + 24, 80);
+      svg += `<rect x="${p.x - pw / 2}" y="${topPad - 20}" width="${pw}" height="34" rx="6" fill="var(--md-surface-container-high, #2b2d30)" stroke="var(--md-outline, #8e9196)" stroke-width="1.5"/>
+        <text x="${p.x}" y="${topPad + 2}" text-anchor="middle" font-size="13" font-weight="600" fill="var(--md-on-surface, #e3e3e3)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeXml(p.label)}</text>`;
+      svg += `<rect x="${p.x - pw / 2}" y="${height - 40}" width="${pw}" height="34" rx="6" fill="var(--md-surface-container-high, #2b2d30)" stroke="var(--md-outline, #8e9196)" stroke-width="1.5"/>
+        <text x="${p.x}" y="${height - 18}" text-anchor="middle" font-size="13" font-weight="600" fill="var(--md-on-surface, #e3e3e3)" font-family="var(--font-sans, system-ui, sans-serif)">${escapeXml(p.label)}</text>`;
+    });
+
+    svg += `</svg>`;
+    return svg;
+  }
+
+  function renderMermaidSvg(code) {
+    if (!code || typeof code !== 'string') return null;
+    const lines = code.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('%%'));
+    if (lines.length === 0) return null;
+
+    const first = lines[0].toLowerCase();
+    try {
+      if (first.startsWith('sequencediagram')) {
+        return renderSequenceDiagramSvg(lines.slice(1));
+      } else if (first.startsWith('graph') || first.startsWith('flowchart')) {
+        const dir = lines[0].trim().split(/\s+/)[1]?.toUpperCase() || 'TD';
+        return renderFlowchartSvg(lines.slice(1), dir);
+      } else if (first.startsWith('statediagram')) {
+        let startCount = 0;
+        let endCount = 0;
+        const converted = [];
+        for (const l of lines.slice(1)) {
+          let line = l.trim();
+          if (!line || line.startsWith('state ') || line.startsWith('%%')) continue;
+          if (line.startsWith('[*]')) {
+            startCount++;
+            line = `_start_${startCount}((●)) ` + line.slice(3);
+          }
+          if (line.includes('--> [*]')) {
+            endCount++;
+            line = line.replace('--> [*]', `--> _end_${endCount}(((◉)))`);
+          }
+          const colonMatch = line.match(/^([A-Za-z0-9_\-\.]+)\s*-->\s*([A-Za-z0-9_\-\.\(\)\*\[\]]+)\s*:\s*(.+)$/);
+          if (colonMatch) {
+            line = `${colonMatch[1]} -->|${colonMatch[3].trim()}| ${colonMatch[2]}`;
+          }
+          converted.push(line);
+        }
+        return renderFlowchartSvg(converted, 'TD');
+      } else if (first.startsWith('classdiagram')) {
+        // Class diagram: extract classes and relationships
+        const relRegex = /([A-Za-z0-9_\-\.]+)\s*(<\|--|\*--|o--|-->|--)\s*([A-Za-z0-9_\-\.]+)/;
+        const converted = [];
+        for (const l of lines.slice(1)) {
+          const trimmed = l.trim();
+          if (!trimmed || trimmed.startsWith('%%') || trimmed.includes('{') || trimmed.includes('}')) continue;
+          const m = trimmed.match(relRegex);
+          if (m) {
+            converted.push(`${m[1]} --> ${m[3]}`);
+          } else {
+            const classMatch = trimmed.match(/^class\s+([A-Za-z0-9_\-\.]+)/i);
+            if (classMatch) converted.push(classMatch[1]);
+          }
+        }
+        if (converted.length > 0) return renderFlowchartSvg(converted, 'TD');
+      }
+    } catch (err) {
+      console.warn('Mermaid render error:', err);
+    }
+    return null;
+  }
+
+  function buildMermaidBlock(codeText) {
+    const svgString = renderMermaidSvg(codeText);
+    if (!svgString) return null;
+
+    const block = document.createElement('div');
+    block.className = 'mermaid-block';
+
+    const header = document.createElement('div');
+    header.className = 'mermaid-header';
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'mermaid-title';
+    titleDiv.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span>Diagram</span>';
+
+    const toolsDiv = document.createElement('div');
+    toolsDiv.className = 'mermaid-tools';
+
+    const toggleGroup = document.createElement('div');
+    toggleGroup.className = 'mermaid-toggle-group';
+
+    const btnDiagram = document.createElement('button');
+    btnDiagram.type = 'button';
+    btnDiagram.className = 'btn-mermaid-tab active';
+    btnDiagram.textContent = 'Diagram';
+
+    const btnCode = document.createElement('button');
+    btnCode.type = 'button';
+    btnCode.className = 'btn-mermaid-tab';
+    btnCode.textContent = 'Code';
+
+    toggleGroup.append(btnDiagram, btnCode);
+
+    const btnPreview = document.createElement('button');
+    btnPreview.type = 'button';
+    btnPreview.className = 'btn-mermaid-action';
+    btnPreview.title = 'View full size';
+    btnPreview.setAttribute('aria-label', 'View full size');
+    btnPreview.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M120-120v-200h80v120h120v80H120Zm520 0v-80h120v-120h80v200H640ZM120-640v-200h200v80H200v120h-80Zm640 0v-120H640v-80h200v200h-80Z"/></svg>';
+
+    const btnCopy = document.createElement('button');
+    btnCopy.type = 'button';
+    btnCopy.className = 'btn-mermaid-action';
+    btnCopy.title = 'Copy Mermaid code';
+    btnCopy.setAttribute('aria-label', 'Copy Mermaid code');
+    btnCopy.innerHTML = '<svg viewBox="0 -960 960 960" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg><span>Copy</span>';
+
+    btnCopy.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyToClipboard(codeText, btnCopy, 'Copied');
+    });
+
+    toolsDiv.append(toggleGroup, btnPreview, btnCopy);
+    header.append(titleDiv, toolsDiv);
+
+    const diagramWrap = document.createElement('div');
+    diagramWrap.className = 'mermaid-diagram-wrap';
+    diagramWrap.innerHTML = svgString;
+
+    const codeWrap = document.createElement('div');
+    codeWrap.className = 'mermaid-code-wrap hidden';
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.textContent = codeText;
+    pre.appendChild(code);
+    codeWrap.appendChild(pre);
+
+    btnDiagram.addEventListener('click', () => {
+      btnDiagram.classList.add('active');
+      btnCode.classList.remove('active');
+      diagramWrap.classList.remove('hidden');
+      codeWrap.classList.add('hidden');
+      btnPreview.classList.remove('hidden');
+    });
+
+    btnCode.addEventListener('click', () => {
+      btnCode.classList.add('active');
+      btnDiagram.classList.remove('active');
+      diagramWrap.classList.add('hidden');
+      codeWrap.classList.remove('hidden');
+      btnPreview.classList.add('hidden');
+    });
+
+    btnPreview.addEventListener('click', () => {
+      const svgDataUri = 'data:image/svg+xml;utf8,' + encodeURIComponent(svgString);
+      openImagePreview(svgDataUri, 'Mermaid Diagram', '');
+    });
+
+    block.append(header, diagramWrap, codeWrap);
+    return block;
+  }
+
   // Safe GitHub Flavored Markdown block renderer (DOM construction only)
   function renderMarkdown(el, raw) {
     if (!raw) return;
@@ -1257,7 +1799,7 @@
       const line = lines[i];
 
       // 1. Fenced Code Block
-      const codeMatch = line.match(/^```(\w*)/);
+      const codeMatch = line.match(/^`{3,}\s*(\w*)/);
       if (codeMatch) {
         const lang = codeMatch[1].trim();
         i++;
@@ -1268,6 +1810,14 @@
         }
         if (i < lines.length && lines[i].startsWith('```')) i++;
         const codeText = codeLines.join('\n');
+
+        if (lang.toLowerCase() === 'mermaid') {
+          const mermaidEl = buildMermaidBlock(codeText);
+          if (mermaidEl) {
+            el.appendChild(mermaidEl);
+            continue;
+          }
+        }
 
         const block = document.createElement('div');
         block.className = 'code-block';

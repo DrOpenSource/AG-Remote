@@ -64,6 +64,27 @@ async function runTests() {
   assert(typeof snapshot.lastActivity === 'number' && Math.abs(snapshot.lastActivity - threeHoursAgo.getTime()) < 2000,
     'Snapshot carries when the conversation last changed (for the phone\'s "Last active" line)');
 
+  // Test tool in-flight execution status in SessionWatcher
+  const activeTranscriptPath = path.join(logs, 'transcript.jsonl');
+  // Append a user input and a planner response calling run_command, followed by running command step
+  fs.appendFileSync(activeTranscriptPath,
+    JSON.stringify({ step_index: 2, type: 'USER_INPUT', status: 'DONE', created_at: new Date().toISOString(), content: '<USER_REQUEST>build the project</USER_REQUEST>' }) + '\n' +
+    JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: new Date().toISOString(), content: 'Building project...', tool_calls: [{ name: 'run_command', args: { CommandLine: 'npm run build' } }] }) + '\n' +
+    JSON.stringify({ step_index: 4, type: 'RUN_COMMAND', status: 'DONE', created_at: new Date().toISOString() }) + '\n'
+  );
+  // Re-read via updateSnapshot
+  await (adapter as any).watcher.updateSnapshot();
+  const activeSnapshot = await adapter.getSnapshot();
+  assert(activeSnapshot.status === 'generating', 'SessionWatcher: in-flight tool execution shows status "generating"');
+
+  // Once final planner response without tool calls arrives, status returns to idle
+  fs.appendFileSync(activeTranscriptPath,
+    JSON.stringify({ step_index: 5, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: new Date().toISOString(), content: 'Build finished successfully.' }) + '\n'
+  );
+  await (adapter as any).watcher.updateSnapshot();
+  const finishedSnapshot = await adapter.getSnapshot();
+  assert(finishedSnapshot.status === 'idle', 'SessionWatcher: final tool-less response restores status "idle"');
+
   console.log('\n[Suite 2] Security Invariants (Mismatched / Unsafe Actions)');
   
   // Test 1: Empty prompt validation

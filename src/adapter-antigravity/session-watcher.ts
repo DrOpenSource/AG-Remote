@@ -135,26 +135,31 @@ export class SessionWatcher extends EventEmitter {
         try {
           const obj = JSON.parse(lines[lineIndex]);
           if (obj.step_index === stepIndex && typeof obj.content === 'string') {
-            if (this.fullContentCache.size > 200) this.fullContentCache.clear();
-            this.fullContentCache.set(cacheKey, obj.content);
-            return obj.content;
+            if (!obj.content.includes('<truncated')) {
+              if (this.fullContentCache.size > 200) this.fullContentCache.clear();
+              this.fullContentCache.set(cacheKey, obj.content);
+              return obj.content;
+            }
           }
         } catch (_) {}
       }
 
       // 2. Search fallback in case line indices drifted
+      const stepRegex = new RegExp(`"step_index"\\s*:\\s*${stepIndex}\\b`);
       for (let j = lines.length - 1; j >= 0; j--) {
         const line = lines[j].trim();
         if (!line) continue;
-        if (!line.includes(`"step_index":${stepIndex}`) && !line.includes(`"step_index": ${stepIndex}`)) {
+        if (!stepRegex.test(line)) {
           continue;
         }
         try {
           const obj = JSON.parse(line);
           if (obj.step_index === stepIndex && typeof obj.content === 'string') {
-            if (this.fullContentCache.size > 200) this.fullContentCache.clear();
-            this.fullContentCache.set(cacheKey, obj.content);
-            return obj.content;
+            if (!obj.content.includes('<truncated')) {
+              if (this.fullContentCache.size > 200) this.fullContentCache.clear();
+              this.fullContentCache.set(cacheKey, obj.content);
+              return obj.content;
+            }
           }
         } catch (_) {}
       }
@@ -354,35 +359,38 @@ export class SessionWatcher extends EventEmitter {
       const messages: ChatMessage[] = [];
       let pendingApproval: Approval | null = null;
       let isGenerating = false;
+      let lastUserIdx = -1;
+      let lastPlannerIdx = -1;
+      let lastPlannerHasTools = false;
+      let lastStepStatus = '';
 
       for (let i = 0; i < lines.length; i++) {
         try {
           const step = JSON.parse(lines[i]);
           const ts = step.created_at ? new Date(step.created_at).getTime() : Date.now();
+          if (i === lines.length - 1) {
+            lastStepStatus = typeof step.status === 'string' ? step.status : '';
+          }
 
           if (step.type === 'USER_INPUT') {
+            lastUserIdx = i;
             // New user input concludes any preceding tool approvals
             pendingApproval = null;
             let content = step.content || '';
-            if (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) {
+            const needsFull = (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) ||
+                              (typeof content === 'string' && content.includes('<truncated'));
+            if (needsFull) {
               const full = this.getFullContent(i, step.step_index);
-              if (full) content = full;
+              if (full && !full.includes('<truncated')) content = full;
             }
             const match = content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
-            const text = match ? match[1].trim() : content.slice(0, 500);
+            const text = match ? match[1].trim() : content.trim();
             messages.push({
               id: `msg-${step.step_index}`,
               role: 'user',
               text,
               ts
             });
-            // If user input is the last step, agent is likely generating, unless the file has been quiet
-            // for a while (a chat that ended on an error or a closed window). Used only without a live status.
-            if (i === lines.length - 1) {
-              let quietMs = 0;
-              try { quietMs = Date.now() - fs.statSync(this.activeTranscriptPath!).mtimeMs; } catch (_) {}
-              isGenerating = quietMs < UNANSWERED_STALE_MS;
-            }
           } else if (step.type === 'ASK_QUESTION') {
             // Execution of ask_question clears pending ask_question approval
             if (pendingApproval && pendingApproval.kind === 'ask_question') {
@@ -399,10 +407,16 @@ export class SessionWatcher extends EventEmitter {
               pendingApproval = null;
             }
           } else if (step.type === 'PLANNER_RESPONSE') {
+            lastPlannerIdx = i;
+            const hasTools = Array.isArray(step.tool_calls) && step.tool_calls.length > 0;
+            lastPlannerHasTools = hasTools;
+
             let content = step.content || '';
-            if (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) {
+            const needsFull = (Array.isArray(step.truncated_fields) && step.truncated_fields.includes('content')) ||
+                              (typeof content === 'string' && content.includes('<truncated'));
+            if (needsFull) {
               const full = this.getFullContent(i, step.step_index);
-              if (full) content = full;
+              if (full && !full.includes('<truncated')) content = full;
             }
             if (content) {
               messages.push({
@@ -414,7 +428,7 @@ export class SessionWatcher extends EventEmitter {
             }
 
             // Check tool calls
-            if (Array.isArray(step.tool_calls) && step.tool_calls.length > 0) {
+            if (hasTools) {
               for (const tc of step.tool_calls) {
                 const toolBaseName = tc.name.includes(':') ? tc.name.split(':').pop()! : tc.name;
                 // If interactive tool call (run_command, ask_question, write_to_file, etc.)
@@ -464,6 +478,23 @@ export class SessionWatcher extends EventEmitter {
             }
           }
         } catch (_) {}
+      }
+
+      // Check whether agent is generating or awaiting
+      let quietMs = 0;
+      try { quietMs = Date.now() - fs.statSync(this.activeTranscriptPath!).mtimeMs; } catch (_) {}
+      const isStale = quietMs >= UNANSWERED_STALE_MS;
+
+      if (!isStale) {
+        if (lastUserIdx > -1 && lastPlannerIdx < lastUserIdx) {
+          // User input waiting for first planner response
+          isGenerating = true;
+        } else if (lastPlannerIdx >= lastUserIdx && lastPlannerHasTools) {
+          // Agent emitted planner response with tool calls; tool is running or awaiting result
+          isGenerating = true;
+        } else if (lastStepStatus && /RUNNING|WAITING/.test(lastStepStatus)) {
+          isGenerating = true;
+        }
       }
 
       // Determine current status

@@ -781,6 +781,9 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   border-radius: var(--shape-lg-plus) var(--shape-sm) var(--shape-lg-plus) var(--shape-lg-plus);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
 /* "You" is for screen readers; the position already says it */
 .chat-message.user .chat-author {
@@ -840,6 +843,9 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   line-height: 24px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-link {
@@ -1793,6 +1799,8 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   background: var(--md-surface-container-highest);
   overflow: hidden;
   border: 1px solid var(--md-outline-variant);
+  max-width: 100%;
+  min-width: 0;
 }
 .code-header {
   display: flex;
@@ -1835,16 +1843,130 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 20px;
   color: var(--md-on-surface);
+  max-width: 100%;
 }
 .code-block pre code {
   padding: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+/* Mermaid Diagram Block */
+.mermaid-block {
+  margin: 12px 0;
+  border-radius: var(--shape-md);
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+}
+.mermaid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--md-surface-container);
+  border-bottom: 1px solid var(--md-outline-variant);
+  font-size: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mermaid-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--md-on-surface);
+  letter-spacing: 0.2px;
+}
+.mermaid-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mermaid-toggle-group {
+  display: inline-flex;
+  background: var(--md-surface-container-high);
+  border-radius: var(--shape-full);
+  padding: 2px;
+  border: 1px solid var(--md-outline-variant);
+}
+.btn-mermaid-tab {
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--dur-short) var(--ease), color var(--dur-short) var(--ease);
+}
+.btn-mermaid-tab.active {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font-weight: 600;
+}
+.btn-mermaid-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--shape-xs);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--dur-short) var(--ease), color var(--dur-short) var(--ease);
+}
+.btn-mermaid-action:hover,
+.btn-mermaid-action:active {
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+}
+.btn-mermaid-action.copied {
+  color: var(--md-success);
+}
+.mermaid-diagram-wrap {
+  padding: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  justify-content: center;
+  background: var(--md-surface-container-low);
+}
+.mermaid-diagram-wrap.hidden,
+.mermaid-code-wrap.hidden {
+  display: none !important;
+}
+.mermaid-svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.mermaid-code-wrap pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-lowest);
 }
 
 /* Table container */
@@ -1952,7 +2074,9 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   border-bottom: 1px solid var(--md-outline-variant);
   padding: 0 12px 6px;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  z-index: 90;
   min-height: 40px;
 }
 .context-bar.hidden {
@@ -2039,6 +2163,7 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
+  z-index: 91;
 }
 
 .host-dropdown {
@@ -2047,7 +2172,7 @@ body:has(.approval-card:not(.hidden)) .snackbar {
   left: 0;
   width: max-content;
   min-width: 250px;
-  max-width: min(340px, 90vw);
+  max-width: min(340px, calc(100vw - 24px));
   background: var(--md-surface-variant);
   border: 1px solid var(--md-outline-variant);
   border-radius: 14px;

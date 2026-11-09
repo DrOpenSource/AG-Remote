@@ -918,6 +918,9 @@ body[data-status="disconnected"] .empty-state { visibility: hidden; }
   resize: none;
   max-height: 144px;
   outline: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 #promptInput::placeholder { color: var(--md-on-surface-variant); }
 

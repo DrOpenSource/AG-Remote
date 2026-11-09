@@ -1,5 +1,5 @@
 // AG-Remote Service Worker (Cache static shell for offline PWA installation)
-const CACHE_NAME = 'ag-remote-shell-v32';
+const CACHE_NAME = 'ag-remote-shell-v33';
 // What the last tapped notification said, for an app window that opens fresh (see app.js).
 const NOTICE_CACHE = 'ag-remote-notice';
 const ASSETS = [
@@ -38,6 +38,12 @@ self.addEventListener('activate', (event) => {
     })
   );
   self.clients.claim();
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('fetch', (event) => {

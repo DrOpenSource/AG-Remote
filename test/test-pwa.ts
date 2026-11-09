@@ -57,6 +57,7 @@ async function runTests() {
   assert(indexRes.body.includes('id="btnReloadApp"'), 'index.html contains #btnReloadApp for hard reload');
   assert(indexRes.body.includes('id="btnMic"'), 'index.html contains #btnMic for voice dictation');
   assert(indexRes.body.includes('accept="image/*,.pdf,.txt,.md,.log,.json,.csv,.ts,.js,.py"'), 'index.html contains #attachInput with documents and code');
+  assert(!indexRes.body.includes('maxlength="4000"') && indexRes.body.includes('id="promptInput"'), 'index.html #promptInput has no maxlength restriction');
 
   // 2. GET /app.css
   const cssRes = await fetchUrl('/app.css');
@@ -69,11 +70,13 @@ async function runTests() {
   assert(cssRes.body.includes('.drawer-item-badge') && cssRes.body.includes('flex-shrink: 0'), 'app.css contains drawer badge shape and whitespace safeguards');
   assert(cssRes.body.includes('.context-bar') && cssRes.body.includes('overflow: visible'), 'app.css context-bar has overflow: visible to prevent dropdown clipping');
   assert(cssRes.body.includes('mermaid-block'), 'app.css contains mermaid diagram styles');
+  assert(cssRes.body.includes('#promptInput') && cssRes.body.includes('overflow-y: auto'), 'app.css #promptInput contains touch scrolling overflow rules');
 
   // 3. GET /app.js
   const jsRes = await fetchUrl('/app.js');
   assert(jsRes.status === 200, 'GET /app.js returns HTTP 200 OK');
   assert(jsRes.type.includes('application/javascript'), 'GET /app.js serves Content-Type application/javascript');
+  assert(jsRes.body.includes('promptInput.removeAttribute'), 'app.js includes defensive maxlength removal guard');
   assert(jsRes.body.includes('connectWebSocket'), 'app.js contains WebSocket connection logic');
   assert(jsRes.body.includes('visibilitychange'), 'app.js contains phone sleep/wake auto-reconnect logic');
   assert(jsRes.body.includes('triggerReconnect'), 'app.js contains tap-to-reconnect logic on status badge');

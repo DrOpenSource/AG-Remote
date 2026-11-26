@@ -6,7 +6,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, parseWindowsNetstatPorts, rankLanguageServers, parseServerCommandLine, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
+import { LsBridge, buildInteraction, extractPending, parseConversations, normalizeWorkspace, parsePsOutput, parseListeningPorts, parseWindowsNetstatPorts, rankLanguageServers, parseServerCommandLine, resolveDiscoveredServer, type LsServer } from '../src/adapter-antigravity/ls-bridge.ts';
 import { AntigravityAdapter } from '../src/adapter-antigravity/index.ts';
 import { auditLogger } from '../src/core/logger.ts';
 import { parsePromptImages, MAX_PROMPT_IMAGES, MAX_PROMPT_IMAGE_BYTES } from '../src/server/api.ts';
@@ -28,6 +28,7 @@ console.log('🧪 TEST SUITE: LANGUAGE-SERVER BRIDGE (fake server, verified wire
 console.log('='.repeat(75));
 
 const TOKEN = 'live-secret-token-6f1e';
+let acceptedToken = TOKEN;
 const CASCADE = '11111111-2222-3333-4444-555555555555';
 
 // ---- Fake language server ----
@@ -70,7 +71,7 @@ const server = http.createServer((req, res) => {
     let parsed: any = {};
     try { parsed = JSON.parse(body || '{}'); } catch (_) {}
     state.calls.push({ method, body: parsed, token });
-    if (token !== TOKEN) { res.writeHead(401); res.end('{"code":"unauthenticated"}'); return; }
+    if (token !== acceptedToken) { res.writeHead(401); res.end('{"code":"unauthenticated"}'); return; }
     if (method === 'SendUserCascadeMessage' && state.rejectImages && parsed.images) {
       res.writeHead(400); res.end('{"code":"invalid_argument","message":"unknown field images"}'); return;
     }
@@ -187,6 +188,7 @@ async function run() {
     '  TCP    127.0.0.1:51235        0.0.0.0:0              LISTENING       234',
     '  TCP    127.0.0.1:49999        0.0.0.0:0              LISTENING       1234',
     '  TCP    127.0.0.1:48888        0.0.0.0:0              LISTENING       50234',
+    '  TCP    192.0.2.1:51237        127.0.0.1:0            LISTENING       234',
     '  TCP    0.0.0.0:51236          0.0.0.0:0              LISTENING       234'
   ].join('\r\n');
   const winPorts = parseWindowsNetstatPorts(netstatSample, 234);
@@ -199,12 +201,20 @@ async function run() {
   assert(winAgy?.kind === 'agy' && winAgy.token === 'abc-123', 'Windows agy.exe: recognised, token read');
   assert(winAgy?.workspaceId === null && JSON.stringify(winAgy.addDirs) === '["c:/users/me/projects/my app"]', 'agy: no workspace id; --add-dir with a space, normalized');
   assert(winAgy?.appDataDir === 'antigravity', 'agy: --app_data_dir read');
+  assert(winAgy?.hubPort === 53397, 'agy: --hub-port accepts a separate numeric value');
   assert(parseServerCommandLine('C:\\x\\agy.exe --csrf_token=t --add-dir=C:\\work\\proj')?.addDirs?.[0] === 'c:/work/proj', 'agy: --flag=value form');
   const winLs = parseServerCommandLine('C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\resources\\bin\\language_server_windows_x64.exe --extension_server_csrf_token other --csrf_token real --workspace_id file_c_3A_proj');
   assert(winLs?.kind === 'language_server' && winLs.token === 'real' && winLs.workspaceId === 'file_c_3A_proj', 'older Windows language_server: token not confused with --extension_server_csrf_token');
   assert(parseServerCommandLine('C:\\x\\agy-helper.exe --csrf_token t') === null, 'a different program with a similar name is ignored');
   assert(parseServerCommandLine('node agy.js --csrf_token t') === null, 'a script named agy is ignored');
-  assert(parseServerCommandLine('C:\\x\\agy.exe --hub --add-dir C:\\p') === null, 'a server without a token is ignored');
+  assert(parseServerCommandLine('C:\\x\\language_server_windows_x64.exe --add-dir C:\\p') === null, 'legacy language_server still requires its command-line token');
+  assert(parseServerCommandLine('C:\\x\\agy.exe --hub-port=2801 --add-dir "C:\\path --hub"') === null, 'a Hub port or quoted directory does not turn an interactive agy into a Hub');
+  const tokenless = parseServerCommandLine('"C:\\Program Files\\Antigravity IDE\\agy.exe" --hub --hub-port=2801 --app_data_dir=antigravity --add-dir="C:\\My Project"');
+  assert(tokenless?.kind === 'agy' && !tokenless.token && tokenless.hubPort === 2801 && tokenless.addDirs?.[0] === 'c:/my project', 'Windows Hub without --csrf_token is discovered with its port and workspace');
+  for (const invalidPort of ['0', '65536', '2801junk', '2.5']) {
+    const parsed = parseServerCommandLine(`agy --hub --hub-port=${invalidPort}`);
+    assert(parsed?.kind === 'agy' && parsed.hubPort === undefined, `invalid Hub port ${invalidPort} falls back to listener discovery`);
+  }
   const macAgy = parsePsOutput(' 700   412 /Users/me/.gemini/bin/agy --hub --hub-port 51000 --app_data_dir antigravity --csrf_token mac-tok --add-dir /Users/me/proj');
   assert(macAgy.length === 1 && macAgy[0].kind === 'agy' && macAgy[0].addDirs?.[0] === '/users/me/proj', 'macOS agy from ps output');
   const twoWindows = [
@@ -214,6 +224,57 @@ async function run() {
   assert(rankLanguageServers(twoWindows, 'C:\\Users\\me\\Projects\\B\\')[0].pid === 2, "one agy per window: this window's server comes first");
   assert(rankLanguageServers(twoWindows, 'C:\\Users\\me\\Projects\\A')[0].pid === 1, 'and the other window gets its own');
   assert(rankLanguageServers(twoWindows)[0].pid === 1, 'no folder given: order kept');
+
+  console.log('\n[Suite 1d] Hub daemon discovery and authenticated port selection');
+  const hubHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agr-hub-discovery-'));
+  const daemonDir = path.join(hubHome, '.gemini', 'antigravity', 'daemon');
+  fs.mkdirSync(daemonDir, { recursive: true });
+  const recordPath = path.join(daemonDir, `hub_${port}.json`);
+  const proc = { ...tokenless!, hubPort: port, pid: 4321, ppid: 1234 };
+  const writeHubRecord = (pid = proc.pid, httpPort = port, csrfToken = TOKEN) =>
+    fs.writeFileSync(recordPath, JSON.stringify({ pid, httpPort, csrfToken }));
+  const discoverHub = async () => [(await resolveDiscoveredServer(proc, [], hubHome))!];
+  const hubBridge = new LsBridge({ discover: discoverHub, discoveryCooldownMs: 0, workspace: 'C:\\My Project', ownerPid: 1234 });
+  const denied = http.createServer((_req, res) => { res.writeHead(401); res.end('{}'); });
+  await new Promise<void>(resolve => denied.listen(0, '127.0.0.1', resolve));
+  const deniedPort = (denied.address() as any).port as number;
+  try {
+    state.calls = [];
+    assert(await hubBridge.listConversations() === null && state.calls.length === 0, 'missing daemon file yields no RPC, even on a declared listening port');
+    fs.writeFileSync(recordPath, '{incomplete');
+    assert(!(await discoverHub())[0].token, 'partially written daemon file yields no credential');
+    writeHubRecord(proc.pid + 1);
+    assert(!(await discoverHub())[0].token, 'daemon record for a different PID is ignored');
+    writeHubRecord(proc.pid, port + 1);
+    assert(!(await discoverHub())[0].token, 'daemon record for a different HTTP port is ignored');
+    writeHubRecord(proc.pid, port, 'invalid-header\n');
+    assert(!(await discoverHub())[0].token, 'invalid credential header characters are rejected');
+    writeHubRecord();
+    assert(!(await resolveDiscoveredServer({ ...proc, appDataDir: '../antigravity' }, [], hubHome))?.token, 'unsafe profile path is refused');
+    const viaListeners = await resolveDiscoveredServer({ ...proc, hubPort: undefined }, [deniedPort, port], hubHome);
+    assert(viaListeners?.token === TOKEN && JSON.stringify(viaListeners.ports) === JSON.stringify([port, deniedPort]), 'without a port hint, a matching daemon file can be found through this PID’s listeners');
+    const hinted = await resolveDiscoveredServer(proc, [deniedPort, port], hubHome);
+    assert(JSON.stringify(hinted?.ports) === JSON.stringify([port, deniedPort]), 'Hub port is tried first and is deduplicated from listener discovery');
+    const list = await hubBridge.listConversations();
+    assert(list?.[0].cascadeId === CASCADE && hubBridge.describeEndpoint()?.port === port && hubBridge.describeEndpoint()?.scheme === 'http', 'declared Hub HTTP port works without netstat when the discovery record matches');
+    assert(hubBridge.describeEndpoint()?.matchedBy === 'folder' && state.calls.every(c => c.token === TOKEN), 'Hub credential authenticates every RPC and keeps window matching');
+
+    acceptedToken = 'rotated-hub-token';
+    writeHubRecord(proc.pid, port, acceptedToken);
+    assert(await hubBridge.listConversations() === null && !hubBridge.isConnected(), 'a rejected cached credential clears the connection');
+    assert((await hubBridge.listConversations())?.[0].cascadeId === CASCADE, 'the next call discovers and uses the rotated credential');
+    acceptedToken = TOKEN;
+
+    const legacyAgy = (await resolveDiscoveredServer({ ...proc, hubPort: deniedPort, token: TOKEN }, [port], hubHome))!;
+    const fallbackBridge = new LsBridge({ discover: async () => [legacyAgy], discoveryCooldownMs: 0 });
+    assert(legacyAgy.token === TOKEN && (await fallbackBridge.listConversations())?.[0].cascadeId === CASCADE && fallbackBridge.describeEndpoint()?.port === port, 'argv authentication still works and a 401 on the hinted port falls back to legacy listener discovery');
+    const unauthenticated = new LsBridge({ discover: async () => [{ ...legacyAgy, token: 'wrong-token' }], discoveryCooldownMs: 0 });
+    assert(await unauthenticated.listConversations() === null && !unauthenticated.isConnected(), '401 responses never mark a server as connected');
+  } finally {
+    acceptedToken = TOKEN;
+    denied.close();
+    fs.rmSync(hubHome, { recursive: true, force: true });
+  }
 
   console.log('\n[Suite 2] Bridge against fake server');
   state.calls = [];

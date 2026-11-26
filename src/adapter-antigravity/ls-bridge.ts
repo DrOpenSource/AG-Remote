@@ -4,23 +4,29 @@
  * Talks to the IDE's local language server over Connect/JSON on 127.0.0.1, the same
  * channel the agent panel uses. Verified 2026-10-22 (NOTES.md §13):
  *  - live agent state is held by the language server WITHOUT a --workspace_id;
- *  - auth header x-codeium-csrf-token = that process's --csrf_token;
+ *  - auth header x-codeium-csrf-token carries the server's own CSRF credential;
  *  - a pending approval is a step with status WAITING and a requestedInteraction.
  *
- * The CSRF token is read from the process command line at runtime and kept in memory
- * only. It is never logged, persisted, or sent anywhere except 127.0.0.1.
+ * Read the credential from the process command line or the agy Hub's daemon discovery file.
+ * AG-Remote keeps it in memory and sends it only to the local RPC endpoint.
  */
 import http from 'http';
 import https from 'https';
 import { execFile } from 'child_process';
+import { readFile } from 'fs/promises';
+import { homedir } from 'os';
+import { join } from 'path';
 import type { PromptImage } from '../core/types.ts';
 
 export interface LsServer {
   pid: number;
   /** --workspace_id: older builds' per-project copies, whose state is stale. Never used for live calls. */
   workspaceId: string | null;
-  token: string;
+  /** Missing when a Hub is visible but its credential is not available yet. */
+  token?: string;
   ports: number[];
+  /** Hub HTTP port from --hub-port or a matching daemon discovery file. */
+  hubPort?: number;
   ppid?: number;
   /** language_server_* (builds up to Oct 2026) or agy (one per window, from late Oct 2026) */
   kind?: 'language_server' | 'agy';
@@ -227,34 +233,44 @@ export function hasInFlightTools(traj: any, staleMs: number = 10 * 60 * 1000): b
 
 export type ParsedServer = Omit<LsServer, 'pid' | 'ports' | 'ppid'>;
 
-/** All values of a --flag (as `--flag value` or `--flag=value`, optionally quoted); never matches --other_flag. */
-function flagValues(cmd: string, flag: string): string[] {
-  const re = new RegExp(`(?:^|\\s)--${flag}(?:=|\\s+)(?:"([^"]*)"|([^\\s"]+))`, 'g');
-  return [...cmd.matchAll(re)].map(m => m[1] ?? m[2]).filter(v => v && !v.startsWith('--'));
+/** All values of a --flag, as `--flag value` or `--flag=value`. */
+function flagValues(args: string[], name: string): string[] {
+  const flag = `--${name}`;
+  return args.flatMap((arg, i) => {
+    const value = arg === flag ? args[i + 1] : arg.startsWith(`${flag}=`) ? arg.slice(flag.length + 1) : undefined;
+    return value && !value.startsWith('--') ? [value] : [];
+  });
 }
 
 /**
  * Recognises the agent server in a process command line, on any OS. Antigravity has shipped two:
  *  - language_server_<os>_<arch>: one shared server with no --workspace_id (live state), plus stale
  *    per-project copies that have one;
- *  - agy (from late Oct 2026): one server per IDE window, its folder in --add-dir.
+ *  - agy (from late Oct 2026): one server per IDE window, its folder in --add-dir. In Hub mode
+ *    its CSRF credential may be in a daemon discovery file instead of the process arguments.
  * The executable is what comes before the first ` --` flag; its path may contain spaces
  * ("/Applications/Antigravity IDE.app/..."). Returns null for anything else. Pure; exported for tests.
  */
 export function parseServerCommandLine(cmd: string): ParsedServer | null {
-  const exe = cmd.split(/\s--/)[0].trim().replace(/^"|"$/g, '');
+  cmd = cmd.trim();
+  const executable = /^(?:"[^"]+"|.+?)(?=\s+"?--|$)/.exec(cmd)?.[0] || '';
+  const exe = executable.replace(/^"|"$/g, '');
   const base = (exe.split(/[\\/]/).pop() || '').toLowerCase().replace(/\.exe$/, '');
   const kind = base.startsWith('language_server') ? 'language_server' : base === 'agy' ? 'agy' : null;
   if (!kind) return null;
-  const token = flagValues(cmd, 'csrf_token')[0] || '';
-  if (!token) return null;
+  const args = (cmd.slice(executable.length).match(/(?:[^\s"]+|"[^"]*")+/g) || []).map(arg => arg.replace(/"/g, ''));
+  const token = flagValues(args, 'csrf_token')[0];
+  if (!token && !(kind === 'agy' && (args.includes('--hub') || args.includes('--hub=true')))) return null;
+  const rawHubPort = kind === 'agy' ? flagValues(args, 'hub-port')[0] || '' : '';
+  const hubPort = /\D/.test(rawHubPort) ? 0 : Number(rawHubPort);
   return {
     kind,
     token,
-    workspaceId: flagValues(cmd, 'workspace_id')[0] || null,
-    attached: /(?:^|\s)--parent_pipe_path[= ]/.test(cmd),
-    addDirs: flagValues(cmd, 'add-dir').map(normalizeWorkspace),
-    appDataDir: flagValues(cmd, 'app_data_dir')[0]
+    hubPort: hubPort > 0 && hubPort <= 65535 ? hubPort : undefined,
+    workspaceId: flagValues(args, 'workspace_id')[0] || null,
+    attached: flagValues(args, 'parent_pipe_path').length > 0,
+    addDirs: flagValues(args, 'add-dir').map(normalizeWorkspace),
+    appDataDir: flagValues(args, 'app_data_dir')[0]
   };
 }
 
@@ -289,11 +305,36 @@ export function rankLanguageServers<T extends Pick<LsServer, 'ppid' | 'attached'
  * Matches exact PID column to avoid suffix collisions (e.g. pid 234 matching 1234). Pure; exported for tests.
  */
 export function parseWindowsNetstatPorts(netstat: string, pid: number): number[] {
-  const pidStr = String(pid);
   return netstat.split(/\r?\n/)
-    .filter(l => /LISTENING/.test(l) && /127\.0\.0\.1:/.test(l) && l.trim().split(/\s+/).pop() === pidStr)
-    .map(l => Number((/127\.0\.0\.1:(\d+)/.exec(l) || [])[1]))
+    .map(l => /^\s*TCP\s+127\.0\.0\.1:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/.exec(l))
+    .map(m => m && Number(m[2]) === pid ? Number(m[1]) : 0)
     .filter(Boolean);
+}
+
+/** Combine a process's Hub port hint and enumerated listeners. Only trust a daemon file for that PID and HTTP port. */
+export async function resolveDiscoveredServer(
+  proc: ParsedServer & { pid: number; ppid: number }, listeningPorts: number[], home = homedir()
+): Promise<LsServer | null> {
+  const { hubPort, token, pid } = proc;
+  const ports = [...new Set(hubPort ? [hubPort, ...listeningPorts] : listeningPorts)];
+  if (ports.length === 0) return null;
+  const profile = proc.appDataDir ?? 'antigravity';
+  if (!token && proc.kind === 'agy' && profile && !/[^a-z0-9_-]/i.test(profile)) {
+    for (const port of ports) {
+      try {
+        const file = join(home, '.gemini', profile, 'daemon', `hub_${port}.json`);
+        const record = JSON.parse(await readFile(file, 'utf8'));
+        const csrfToken = record?.csrfToken;
+        if (record?.pid === pid && record.httpPort === port && typeof csrfToken === 'string' && csrfToken && !/[^\x21-\x7e]/.test(csrfToken)) {
+          // The record vouches for its HTTP port. Other fallback ports must come from this PID's listeners.
+          return { ...proc, token: csrfToken, hubPort: port, ports: [port, ...listeningPorts.filter(p => p !== port)] };
+        }
+      } catch (_) {
+        // Discovery can race Hub startup or shutdown. Recheck later without an unauthenticated probe.
+      }
+    }
+  }
+  return { ...proc, ports };
 }
 
 /** Default discovery on Windows: agent-server processes and their loopback listening ports. */
@@ -305,14 +346,13 @@ export const discoverWindowsLanguageServers: Discover = async () => {
   let procs: any[] = [];
   try { const j = JSON.parse(raw); procs = Array.isArray(j) ? j : [j]; } catch (_) { return []; }
   const netstat = await run('netstat.exe', ['-ano', '-p', 'TCP']);
-  const servers: LsServer[] = [];
-  for (const p of procs) {
+  const servers = await Promise.all(procs.map(async p => {
     const parsed = parseServerCommandLine(String(p?.CommandLine || ''));
-    if (!parsed) continue;
-    const ports = parseWindowsNetstatPorts(netstat, Number(p.ProcessId));
-    if (ports.length > 0) servers.push({ pid: Number(p.ProcessId), ppid: Number(p.ParentProcessId), ports, ...parsed });
-  }
-  return servers;
+    if (!parsed) return null;
+    const pid = Number(p.ProcessId);
+    return resolveDiscoveredServer({ ...parsed, pid, ppid: Number(p.ParentProcessId) }, parseWindowsNetstatPorts(netstat, pid));
+  }));
+  return servers.filter(s => s !== null);
 };
 
 /** Loopback TCP listening ports per pid, from `lsof -nP -iTCP -sTCP:LISTEN` or `ss -ltnpH` output. Pure; exported for tests. */
@@ -346,13 +386,14 @@ export const discoverPosixLanguageServers: Discover = async () => {
   if (!listen && process.platform === 'darwin') listen = await run('/usr/sbin/lsof', ['-nP', '-a', '-iTCP', '-sTCP:LISTEN', '-p', pids]);
   if (!listen) listen = await run('ss', ['-ltnpH']);
   const ports = parseListeningPorts(listen);
-  return procs.map(p => ({ ...p, ports: ports.get(p.pid) || [] })).filter(s => s.ports.length > 0);
+  const servers = await Promise.all(procs.map(p => resolveDiscoveredServer(p, ports.get(p.pid) || [])));
+  return servers.filter(s => s !== null);
 };
 
 export const discoverLanguageServers: Discover =
   process.platform === 'win32' ? discoverWindowsLanguageServers : discoverPosixLanguageServers;
 
-interface Endpoint { server: LsServer; port: number; scheme: 'http' | 'https' }
+interface Endpoint { server: LsServer; token: string; port: number; scheme: 'http' | 'https' }
 
 /**
  * Why this bridge chose its server (shown in diagnostics):
@@ -522,6 +563,15 @@ export class LsBridge {
       }
       if (r && r.status !== 0) {
         // Server answered with an application error: do not retry on another server.
+        if (r.status === 401 || r.status === 403) {
+          if (this.endpoint === ep) {
+            this.endpoint = null;
+            this.matchedBy = null;
+            this.lastDiscovery = 0;
+          }
+          if (mustSucceed) throw new LsBridgeError(`Antigravity rejected its local RPC credential (${r.status})`);
+          return null;
+        }
         if (mustSucceed) throw new LsBridgeError(`${method} failed (HTTP ${r.status}): ${r.raw.slice(0, 200)}`);
         return null;
       }
@@ -595,13 +645,23 @@ export class LsBridge {
     return { ep: fallback, matchedBy: reachable === 1 && !this.ownerPid ? 'only' : 'unconfirmed' };
   }
 
-  /** The first port and scheme on which `server` answers, or null. */
+  /** The first port and scheme that accepts the credential and serves the conversation API. */
   private async reachableEndpoint(server: LsServer): Promise<Endpoint | null> {
+    const token = server.token;
+    if (!token) return null;
     for (const port of server.ports) {
-      for (const scheme of ['https', 'http'] as const) {
-        const ep = { server, port, scheme };
-        const r = await this.post(ep, 'GetCascadeTrajectory', { cascadeId: '' });
-        if (r && r.status !== 0 && !/HTTP request to an HTTPS/.test(r.raw)) return ep;
+      const schemes = port === server.hubPort ? ['http', 'https'] as const : ['https', 'http'] as const;
+      for (const scheme of schemes) {
+        const ep = { server, token, port, scheme };
+        const r = await this.post(ep, 'GetAllCascadeTrajectories', {});
+        if (r?.status !== 200) continue;
+        try {
+          const data = JSON.parse(r.raw);
+          if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+          // Connect JSON may omit the map for an empty conversation list.
+          const summaries = data.trajectorySummaries ?? data.summaries;
+          if (Object.keys(data).length === 0 || (summaries && typeof summaries === 'object' && !Array.isArray(summaries))) return ep;
+        } catch (_) {}
       }
     }
     return null;
@@ -632,7 +692,7 @@ export class LsBridge {
         headers: {
           'content-type': 'application/json',
           'connect-protocol-version': '1',
-          'x-codeium-csrf-token': ep.server.token,
+          'x-codeium-csrf-token': ep.token,
           'content-length': Buffer.byteLength(payload)
         }
       }, (res: any) => {

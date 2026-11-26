@@ -209,3 +209,29 @@ From PRD Section 17:
 - `agRemote.transport` now defaults to `"relay"`; the local server binds to 127.0.0.1 unless Wi-Fi is opted into. Reason: the old default opened plain HTTP on 0.0.0.0:49222 to every network the PC joined.
 - Relay Worker has a per-IP limiter (`relay/src/limiter.ts`, one Durable Object per kind+IP, fixed one-minute window, fails open): 60 WebSocket connects and 10 `/code` requests per minute, tunable in `wrangler.toml [vars]`. Chosen over the Workers rate-limit binding because that binding's free-plan availability is undocumented.
 - Open issue: `GET /code/<code>` returns the room *and the pairing secret*, and the PC accepts any phone holding the secret without asking. The rate limit slows guessing; the real fix is a confirm-on-PC step for new phones (or not storing the secret on the relay).
+
+
+## 15. agy Hub discovery and verification (2026-11-26)
+
+- On Windows x64, the IDE started agy.exe with --hub, --hub-port=2801, and --app_data_dir=antigravity. The Hub listened on loopback ports 2801 and 2805. Its discovery file under ~/.gemini/antigravity/daemon/ reported the same PID and HTTP port, a CSRF credential, and language service version 2.35.1.
+- On that Hub, the Connect/JSON GetAllCascadeTrajectories RPC returned 401 without the CSRF header and 200 with the credential from the discovery file. The authenticated response had trajectorySummaries, and GetCascadeTrajectory returned 200 with trajectory steps. These checks read the existing conversation only. [Independent Windows Hub observations](https://github.com/kyc/obsidian-antigravity/blob/main/docs/HUB_CAPABILITY_BOUNDARIES.md)
+- AG-Remote tries the declared Hub HTTP port first. It reads a tokenless Hub's discovery file for a known port and accepts the credential only when the file's PID and HTTP port match. Fallback ports come from that PID's existing listener enumeration. Legacy language_server and agy processes with a command-line token keep using that credential. Diagnostics identify a Hub with a missing credential.
+
+### Rebuild and verify manually on Windows
+
+From the repository root, use Node.js 22 or 24. Run `npm.cmd ci` if the development dependencies are missing, then run the following commands.
+
+```powershell
+npm.cmd test
+npm.cmd run package -- --out ag-remote-0.3.4-hub-fix.vsix
+(Get-Item -LiteralPath .\ag-remote-0.3.4-hub-fix.vsix).Length
+```
+
+The tests should exit with code 0, and the package should be at most 153,600 bytes. The package command also builds the extension and web app.
+
+On the affected PC, `npm.cmd run test:ls` passed all 160 assertions. Both the original v0.3.4 tag and this patch fail the existing network sentinel assertion because the selected interface address is `198.18.0.1`. The subsequent E2E, Relay host, and Relay link suites pass when run individually.
+
+1. In Antigravity, run **Extensions: Install from VSIX...** and choose `ag-remote-0.3.4-hub-fix.vsix`. Reload every open Antigravity window with **Developer: Reload Window**.
+2. Open the project that already has an Agent conversation. Run **Antigravity Remote: Copy Diagnostics** in that window. Expect at least one discovered server, `Connected to` naming that window's agy and current Hub port, a positive conversation count for that folder, and `Relay: online`.
+3. Open the existing pairing on the phone and select that project window. Expect the existing conversation and its messages to appear. If the connection succeeds but messages are still missing, capture the sanitized diagnostics and check the `Newest one's history` line.
+4. If a legacy Antigravity installation is available, verify that a project with an existing conversation still shows it when its backend is language_server or agy with a command-line token.

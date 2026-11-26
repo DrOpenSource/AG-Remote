@@ -53,7 +53,9 @@ export async function collectDiagnostics(opts: DiagnosticsOptions): Promise<stri
     if (s.appDataDir) flags.push(`data ~/.gemini/${s.appDataDir}`);
     if (s.attached !== undefined) flags.push(s.attached ? 'attached to IDE' : 'not attached');
     if (s.ppid !== undefined) flags.push(`parent ${s.ppid}${s.kind === 'agy' && s.ppid === ownerPid ? ' ← this window' : ''}`);
-    if (!s.workspaceId) {
+    if (s.kind === 'agy' && !s.token) {
+      flags.push('local CSRF credential unavailable');
+    } else if (!s.workspaceId) {
       // Each agy lists only its own window's chats, so ask every one
       const own = await new LsBridge({ discover: async () => [s], discoveryCooldownMs: 0 }).listConversations().catch(() => null);
       flags.push(own ? `lists ${own.length} conversation(s), ${own.filter(c => c.workspaces.includes(ws)).length} for this window` : 'did not answer');
